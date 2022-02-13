@@ -1,0 +1,9 @@
+/matlab_script/
+/data/
+/ex_data/
+/gym_pros/
+/tests/model.pt
+
+# Byte-compiled / optimized / DLL files
+__pycache__/
+*.py[cod]
