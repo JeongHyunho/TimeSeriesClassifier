@@ -1,5 +1,5 @@
 /matlab_script/
-/data/
+/data/*/
 /ex_data/
 /gym_pros/
 /tests/model.pt
