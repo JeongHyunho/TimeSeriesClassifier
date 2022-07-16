@@ -4,7 +4,7 @@
 N_CATS = 6;
 N_TARGETS = 72;
 TIME_SIZE = 150;
-INTERVAL = 20;
+N_BATCHES = 20;
 VAL_RATIO = 0.2;
 TEST_RATIO = 0.2;
 SEED = 41;
@@ -14,23 +14,17 @@ rng(SEED)
 cur_dir = fileparts(mfilename('fullpath'));
 root_dir = fullfile(cur_dir, '..', '..', 'data', 'EIT_EMG_Gait_210127');
 
-% mean, standard deviation of each condition
-cond_mean = zeros(N_CATS, N_TARGETS);
-cond_std = zeros(N_CATS, N_TARGETS);
+% mean, standard deviation of all conditions
+data_files = dir(fullfile(root_dir, 'S*.mat'));
+data_all = [];
 
-for i = 1:N_CATS
-    cond_files = dir(fullfile(root_dir, sprintf('S*_%d_*.mat', i-1)));
-    cond_data_all = [];
-    
-    for j = 1:length(cond_files)
-        filename = fullfile(cond_files(j).folder, cond_files(j).name);
-        data = load(filename, 'Data').Data;
-        cond_data_all = [cond_data_all, data(1:N_TARGETS, :)];
-    end
-    
-    cond_mean(i, :) = mean(cond_data_all, 2)';
-    cond_std(i, :) = std(cond_data_all, 1, 2)';
+for i = 1:length(data_files)
+    filename = fullfile(data_files(i).folder, data_files(i).name);
+    data = load(filename, 'Data').Data;
+    data_all = [data_all, data(1:N_TARGETS, :)];
 end
+target_mean = mean(data_all, 2)';
+target_std = std(data_all, 1, 2)';
 
 % store all dataset, 3 for split
 X_data = nan(3, 2000, TIME_SIZE, N_TARGETS);
@@ -69,19 +63,21 @@ for i = 0:N_CATS-1
             split_idx = 3;
         end
         
-        start_idx = 1;
-        while start_idx + TIME_SIZE < n_frames
-            range = start_idx:start_idx + TIME_SIZE - 1;
+        start_indices = linspace(1, n_frames - TIME_SIZE + 1, N_BATCHES);
+        for idx = round(start_indices)
+            range = idx:idx + TIME_SIZE - 1;
             % do normalization
             X_data(split_idx, cur_idx(split_idx), :, :) = ...
-                (data(1:N_TARGETS, range)' - cond_mean(label + 1, :)) ./ cond_std(label + 1, :);
+                data(1:N_TARGETS, range)';
             Y_data(split_idx, cur_idx(split_idx)) = label;
-            
-            start_idx = start_idx + INTERVAL;
             cur_idx(split_idx) = cur_idx(split_idx) + 1;
         end
     end
 end
+
+% normalization
+X_data = (X_data - reshape(target_mean, 1, 1, 1, N_TARGETS)) ...
+    ./ reshape(target_std, 1, 1, 1, N_TARGETS);
 
 % remove nan and split train/ val/ test
 X_train = squeeze(X_data(1, 1:cur_idx(1) - 1, :, :));

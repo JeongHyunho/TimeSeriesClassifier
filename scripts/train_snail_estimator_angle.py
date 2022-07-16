@@ -9,12 +9,12 @@ from ray import tune
 from ray.tune import CLIReporter
 from ray.tune.schedulers import ASHAScheduler
 
-from data import load_data, get_ordered_combinations
-from model.ankle_estimator import SnailEstimator
+from data import load_estimator_data, get_ordered_combinations
+from models.ankle_estimator import SnailEstimator
 
 
 def try_train(config, target):
-    train_set, val_set, _ = load_data(config['batch_size'], target=target)
+    train_set, val_set, _ = load_estimator_data(config['batch_size'], target=target)
 
     model = SnailEstimator(input_dim=config['input_dim'],
                            output_dim=config['output_dim'],
@@ -87,7 +87,7 @@ def main(target):
     print(f"Best trial final validation loss: {best_trial.last_result['val_loss']:.4f}")
 
     best_config = best_trial.config
-    _, _, test_set = load_data(best_config['batch_size'], device='cpu')
+    _, _, test_set = load_estimator_data(best_config['batch_size'], device='cpu')
     best_logdir = result.get_best_logdir(metric='val_loss', mode='min')
 
     model = SnailEstimator.load_from_config(best_config,

@@ -12,7 +12,7 @@ from ray.tune import Analysis
 from torch.utils.data import DataLoader
 
 from data.snuh_dataset import SnuhEmgForAngle, SnuhEmgForAngleTestStream
-from model.ankle_estimator import LSTMEstimator, SnailEstimator, ExtendedLSTMEstimator
+from models.ankle_estimator import LSTMEstimator, SnailEstimator, ExtendedLSTMEstimator
 
 
 def main(ray_folder, exp_date, target, algo):

@@ -4,7 +4,7 @@ import torch
 from torch import nn, optim
 from torch.utils.data import DataLoader
 
-from model.networks import AttentionBlock, TCBlock, LayerNormLSTM
+from models.networks import AttentionBlock, TCBlock, LayerNormLSTM
 
 
 class Estimator(nn.Module):

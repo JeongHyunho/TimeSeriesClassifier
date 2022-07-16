@@ -2,7 +2,7 @@
 Credits for https://github.com/eambutu/snail-pytorch/blob/master/src/blocks.py
             https://github.com/pytorch/pytorch/blob/cbcb2b5ad767622cf5ec04263018609bde3c974a/benchmarks/fastrnns/custom_lstms.py#L60-L83
 """
-
+import inspect
 import math
 import numbers
 from typing import Tuple
@@ -11,6 +11,8 @@ import torch
 import torch.jit as jit
 from torch import nn, Tensor
 from torch.nn import functional as F
+
+from models import activation_from_string, identity, _str_to_activation
 
 
 class CausalConv1d(nn.Module):
@@ -120,7 +122,7 @@ class AttentionBlock(nn.Module):
         return torch.cat([input, read], dim=2)
 
 
-class LayerNormLSTMCell(jit.ScriptModule):
+class LayerNormLSTMCell(nn.Module):
     def __init__(self, input_size, hidden_size):
         super(LayerNormLSTMCell, self).__init__()
         self.input_size = input_size
@@ -133,7 +135,6 @@ class LayerNormLSTMCell(jit.ScriptModule):
         self.layernorm_h = nn.LayerNorm(4 * hidden_size)
         self.layernorm_c = nn.LayerNorm(hidden_size)
 
-    @jit.script_method
     def forward(self, input, state):
         # type: (Tensor, Tuple[Tensor, Tensor]) -> Tuple[Tensor, Tuple[Tensor, Tensor]]
         hx, cx = state
@@ -180,28 +181,174 @@ class LayerNormLSTM(nn.Module):
 
         if state is None:
             B = input.size(1)
-            hx = input.data.new(B, self.hidden_size).fill_(0.)
-            cx = input.data.new(B, self.hidden_size).fill_(0.)
+            hx = input.data.new(self.num_layers, B, self.hidden_size).fill_(0.)
+            cx = input.data.new(self.num_layers, B, self.hidden_size).fill_(0.)
         else:
             hx, cx = state
 
         outputs, h_states, c_states, = [], [], []
         for t in range(T):
             h_out = input[t]
+            hx_ns = []
+            cx_ns = []
             for idx in range(self.num_layers):
-                h_out, (hx, cx) = self.__getattr__(f'cell{idx}')(h_out, (hx, cx))
+                h_out, (hx_n, cx_n) = self.__getattr__(f'cell{idx}')(h_out, (hx[idx], cx[idx]))
                 if idx < self.num_layers - 1:           # except the last layer
                     h_out = self.dropout(h_out)
+                hx_ns.append(hx_n)
+                cx_ns.append(cx_n)
+            hx = torch.stack(hx_ns, 0)
+            cx = torch.stack(cx_ns, 0)
             outputs.append(h_out)
-            h_states.append(hx)
-            c_states.append(cx)
         output = torch.stack(outputs, 0)
-        h_states = torch.stack(h_states, 0)
-        c_states = torch.stack(c_states, 0)
 
         if self.batch_first:
             output = torch.transpose(output, 0, 1)
-            h_states = torch.transpose(h_states, 0, 1)
-            c_states = torch.transpose(c_states, 0, 1)
 
-        return output, (h_states, c_states)
+        return output, (hx, cx)
+
+
+def construct_mlp(layers, input_dim, output_dim, norm_type='none', act_fcn='relu'):
+    """ mlp 모듈 생성, 마지막 output layer 는 activation 과 normalization layer 없도록 구성
+
+    Args:
+        layers: hidden units 수 리스트
+        input_dim: 입력 텐서 (B, Ni) 의 Ni
+        output_dim: 출력 텐서 (B, No) 의 No
+        norm_type: 'none' or 'batch' or 'layer' 로 normalization layer 선택
+        act_fcn: 각 layer 의 activation function
+
+    Returns:
+         module: 구축된 mlp module
+
+    """
+    assert norm_type in ['none', 'batch', 'layer']
+    act_fcn = activation_from_string(act_fcn)
+
+    module = nn.Sequential()
+    if layers is None or layers == []:
+        module.add_module('layer0', nn.Linear(input_dim, output_dim))
+        if norm_type == 'batch':
+            module.add_module('bn0', nn.BatchNorm1d(output_dim))
+        elif norm_type == 'layer':
+            module.add_module('ln0', nn.LayerNorm(output_dim))
+    else:
+        mlp_in = input_dim
+        for idx, mlp_out in enumerate(layers):
+            module.add_module(f'layer{idx}', nn.Linear(mlp_in, mlp_out))
+            if norm_type == 'batch':
+                module.add_module(f'ln{idx}', nn.BatchNorm1d(mlp_out))
+            elif norm_type == 'layer':
+                module.add_module(f'ln{idx}', nn.LayerNorm(mlp_out))
+            module.add_module(f'act{idx}', act_fcn)
+            mlp_in = mlp_out
+        module.add_module('layer_out', nn.Linear(mlp_in, output_dim))
+
+    return module
+
+
+class Basic1DCNN(nn.Module):
+    def __init__(
+            self,
+            input_width,
+            input_channels,
+            kernel_sizes,
+            n_channels,
+            groups,
+            strides,
+            paddings,
+            normalization_type='none',
+            hidden_init=None,
+            hidden_activation='relu',
+            output_activation=identity,
+            pool_type='none',
+            pool_sizes=None,
+            pool_strides=None,
+            pool_paddings=None,
+    ):
+        assert len(kernel_sizes) == \
+               len(n_channels) == \
+               len(strides) == \
+               len(paddings)
+        assert all([n_c % groups == 0 for n_c in n_channels])
+        assert normalization_type in {'none', 'batch', 'layer'}
+        assert pool_type in {'none', 'max'}
+        if pool_type == 'max2d':
+            assert len(pool_sizes) == len(pool_strides) == len(pool_paddings)
+        super().__init__()
+
+        self.input_width = input_width
+        self.input_channels = input_channels
+        self.output_activation = output_activation
+        if isinstance(hidden_activation, str):
+            hidden_activation = activation_from_string(hidden_activation)
+        self.hidden_activation = hidden_activation
+        self.normalization_type = normalization_type
+        self.pool_type = pool_type
+
+        self.conv_layers = nn.ModuleList()
+        self.conv_norm_layers = nn.ModuleList()
+        self.pool_layers = nn.ModuleList()
+
+        for i, (out_channels, kernel_size, stride, padding) in enumerate(
+                zip(n_channels, kernel_sizes, strides, paddings)
+        ):
+            conv = nn.Conv1d(
+                input_channels,
+                out_channels,
+                kernel_size,
+                stride=stride,
+                padding=padding,
+                groups=groups,
+            )
+            if hidden_init:
+                hidden_init(conv.weight)
+
+            conv_layer = conv
+            self.conv_layers.append(conv_layer)
+            input_channels = out_channels
+
+            if pool_type == 'max':
+                if pool_sizes[i] > 1:
+                    self.pool_layers.append(
+                        nn.MaxPool1d(
+                            kernel_size=pool_sizes[i],
+                            stride=pool_strides[i],
+                            padding=pool_paddings[i],
+                        )
+                    )
+                else:
+                    self.pool_layers.append(None)
+
+        # use torch rather than ptu because initially the model is on CPU
+        test_mat = torch.zeros(
+            1,
+            self.input_channels,
+            self.input_width,
+        )
+        # find output dim of conv_layers by trial and add norm conv layers
+        for i, conv_layer in enumerate(self.conv_layers):
+            test_mat = conv_layer(test_mat)
+            if self.normalization_type == 'batch':
+                self.conv_norm_layers.append(nn.BatchNorm1d(test_mat.shape[1]))
+            if self.normalization_type == 'layer':
+                self.conv_norm_layers.append(nn.LayerNorm(test_mat.shape[1:]))
+            if self.pool_type != 'none':
+                if self.pool_layers[i]:
+                    test_mat = self.pool_layers[i](test_mat)
+
+        self.output_shape = test_mat.shape[1:]  # ignore batch dim
+
+    def forward(self, conv_input):
+        return self.apply_forward_conv(conv_input)
+
+    def apply_forward_conv(self, h):
+        for i, layer in enumerate(self.conv_layers):
+            h = layer(h)
+            if self.normalization_type != 'none':
+                h = self.conv_norm_layers[i](h)
+            if self.pool_type != 'none':
+                if self.pool_layers[i]:
+                    h = self.pool_layers[i](h)
+            h = self.hidden_activation(h)
+        return h

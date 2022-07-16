@@ -9,7 +9,7 @@ from sacred.observers import MongoObserver
 from torch.utils.data import DataLoader
 
 from data.snuh_dataset import SnuhGaitPhase
-from model.phase_classifiers import LSTMClassifier
+from models.phase_classifiers import LSTMClassifier
 
 import matplotlib.pyplot as plt
 from sklearn.metrics import confusion_matrix

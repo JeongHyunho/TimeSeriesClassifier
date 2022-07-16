@@ -1,9 +1,20 @@
-/matlab_script/
 /data/*/
 /ex_data/
-/gym_pros/
-/tests/model.pt
+/tests/models/model.pt
+/environments
+/gym_pros
+/gym_pros/envs
+/gym_pros/envs_data
+/desktop.ini
+
+*/.pytest_cache
+
+.idea
+/scripts/*.log
+/scripts/*.bak
+/scripts/*.sh
 
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
+/gym_pros/

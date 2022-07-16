@@ -6,8 +6,8 @@ from sklearn.metrics import confusion_matrix
 from torch.utils.data import DataLoader
 
 from data.snuh_dataset import SnuhGaitPhase, SnuhEmgForAngle
-from model.ankle_estimator import LSTMEstimator, ExtendedLSTMEstimator, SnailEstimator
-from model.phase_classifiers import LSTMClassifier
+from models.ankle_estimator import LSTMEstimator, ExtendedLSTMEstimator, SnailEstimator
+from models.phase_classifiers import LSTMClassifier
 
 
 def test_model_train():
@@ -79,7 +79,7 @@ def test_emg_model_train():
     # for epoch in range(10):
     #     model.train_model(epoch, loader)
 
-    torch.save(model.state_dict(), './model.pt')
+    torch.save(model.state_dict(), 'model.pt')
     state_dict = torch.load('./model.pt')
     model.load_state_dict(state_dict)
 
