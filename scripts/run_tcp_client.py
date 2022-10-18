@@ -1,24 +1,25 @@
-# socket module import!
-import pickle
 import socket
-
-# socket create and connection
 import struct
+import numpy as np
 
 sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-sock.connect(('143.248.66.79', 9105))
+sock.connect(('143.248.66.79', 9107))
 print('Connected to the server')
 
-# send msg
-data = struct.pack('72f', *([0.]*72))
-for i in range(200):
-    sock.send(data)
-    print(f'send a msg #{i}')
+time_length = 200
+input_dim = 2
 
-    # if i > 80:
-    received = sock.recv(4 * 1)
-    pred = struct.unpack('i', received)
-    print(f'received: {pred}')
+signal = np.random.randn(input_dim, time_length)
+angle = np.random.randn(1, time_length)
+torque = np.random.randn(1, time_length)
+is_terminal = np.hstack([np.ones(time_length - 1), 0])
+data = np.vstack([signal, angle, torque, is_terminal]).T
+
+# send msg
+for line in data:
+    msg = struct.pack('>5f', *line)
+    sock.send(msg)
+    print(f'send a msg #{line}')
 
 # connection close
 sock.close()

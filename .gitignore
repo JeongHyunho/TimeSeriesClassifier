@@ -1,13 +1,16 @@
 /data/*/
 /ex_data/
-/tests/models/model.pt
+/tests/test_models/model.pt
 /environments
 /gym_pros
 /gym_pros/envs
 /gym_pros/envs_data
 /desktop.ini
+/output
 
-*/.pytest_cache
+.pytest_cache
+*.pt
+neptune_config.py
 
 .idea
 /scripts/*.log
@@ -17,4 +20,3 @@
 # Byte-compiled / optimized / DLL files
 __pycache__/
 *.py[cod]
-/gym_pros/

@@ -1,0 +1,13 @@
+{
+  "step_orders": {
+    "trial[0-9]": {
+      "stair_up": 2, "stair_down": 3, "ramp_up": NaN, "ramp_down": NaN
+    },
+    "trial1[0-9]": {
+      "stair_up": 2, "stair_down": NaN, "ramp_up": NaN, "ramp_down": 4
+    },
+    "test[0-9]": {
+      "stair_up": 2, "stair_down": NaN, "ramp_up": NaN, "ramp_down": 4
+    }
+  }
+}

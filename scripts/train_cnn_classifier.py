@@ -6,7 +6,6 @@ from ray import tune
 from ray.tune import CLIReporter
 
 from data import load_classifier_data
-from models.gait_detector import CNNDetector
 from models.gait_phase_classifier import CNNClassifier
 from scripts import ValStopper
 
@@ -19,8 +18,8 @@ def try_train(config):
                    + [config['kernel_size1']] * config['n_conv_layer1']
     n_channels = [72 * config['k_channel0']] * config['n_conv_layer0'] \
                  + [72 * config['k_channel1']] * config['n_conv_layer1']
-    pool_sizes = [0] * (config['n_conv_layer0'] - 1) + [5] \
-                 + [0] * (config['n_conv_layer1'] - 1) + [5]
+    pool_sizes = [None] * (config['n_conv_layer0'] - 1) + [5] \
+                 + [None] * (config['n_conv_layer1'] - 1) + [5]
     pool_strides = [None] * (config['n_conv_layer0'] - 1) + [5] \
                  + [None] * (config['n_conv_layer1'] - 1) + [5]
     pool_padding = [None] * (config['n_conv_layer0'] - 1) + [0] \
@@ -36,7 +35,7 @@ def try_train(config):
         paddings=['same'] * (config['n_conv_layer0'] + config['n_conv_layer1']),
         fc_layers=[config['n_fc_units']] * config['n_fc_layers'],
         output_dim=2,
-        normalization_type=config['cnn_norm'],
+        cnn_norm=config['cnn_norm'],
         pool_type='max',
         pool_sizes=pool_sizes,
         pool_strides=pool_strides,

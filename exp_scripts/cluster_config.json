@@ -1,0 +1,10 @@
+{
+  "conda": "torch",
+  "report": "report.json",
+  "sbatch_kwargs": {
+    "partition": "jobs",
+    "N": 1,
+    "n": 1,
+    "cpus_per_task": 4
+  }
+}

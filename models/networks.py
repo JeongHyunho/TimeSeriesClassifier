@@ -237,7 +237,7 @@ def construct_mlp(layers, input_dim, output_dim, norm_type='none', act_fcn='relu
         for idx, mlp_out in enumerate(layers):
             module.add_module(f'layer{idx}', nn.Linear(mlp_in, mlp_out))
             if norm_type == 'batch':
-                module.add_module(f'ln{idx}', nn.BatchNorm1d(mlp_out))
+                module.add_module(f'bn{idx}', nn.BatchNorm1d(mlp_out))
             elif norm_type == 'layer':
                 module.add_module(f'ln{idx}', nn.LayerNorm(mlp_out))
             module.add_module(f'act{idx}', act_fcn)
@@ -273,7 +273,7 @@ class Basic1DCNN(nn.Module):
         assert all([n_c % groups == 0 for n_c in n_channels])
         assert normalization_type in {'none', 'batch', 'layer'}
         assert pool_type in {'none', 'max'}
-        if pool_type == 'max2d':
+        if pool_type == 'max':
             assert len(pool_sizes) == len(pool_strides) == len(pool_paddings)
         super().__init__()
 
@@ -309,7 +309,7 @@ class Basic1DCNN(nn.Module):
             input_channels = out_channels
 
             if pool_type == 'max':
-                if pool_sizes[i] > 1:
+                if pool_sizes[i]:
                     self.pool_layers.append(
                         nn.MaxPool1d(
                             kernel_size=pool_sizes[i],
