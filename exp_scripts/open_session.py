@@ -35,7 +35,7 @@ if __name__ == '__main__':
     if target == 'pros':
         buffer_cls = ProsthesisBuffer
         controller_cls = ProsthesisController
-        buffer_kwargs = {'config': json.loads(Path('pros_log_config.json').read_text())}
+        buffer_kwargs = {}
     elif target == 'armcurl':
         buffer_cls = ArmCurlBuffer
         controller_cls = ArmCurlController
@@ -81,12 +81,6 @@ if __name__ == '__main__':
                 model_file='best_model.pt',
                 device='cuda',
             )
-            # buffer = buffer_cls(
-            #     config=log_config,
-            #     session_name=se_name,
-            #     trial_prefix='test',
-            #     trial_idx=args.trial_idx,
-            # )
             start_new_thread(run_control_session, (c_conn, controller))
 
         else:

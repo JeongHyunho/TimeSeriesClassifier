@@ -49,8 +49,7 @@ class BaseTcp:
             if len(out_files) == 0:
                 self.trial_idx = 0
             else:
-                match = re.search(r'\d+', str(out_files[-1].name))
-                self.trial_idx = int(match.group(0)) + 1
+                self.trial_idx = len(out_files)
 
         self.logger.info(f"{str(self)} starts!")
 

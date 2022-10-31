@@ -97,6 +97,7 @@ def basic_train_py(tmp_path) -> Path:
     parser = ArgumentParser()
     parser.add_argument('config', type=str)
     parser.add_argument('--job_dir', type=str)
+    parser.add_argument('--log_dir', type=str)
     parser.add_argument('--report', type=str)
     args = parser.parse_args()
     

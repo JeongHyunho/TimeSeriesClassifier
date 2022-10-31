@@ -120,7 +120,7 @@ class Estimator(nn.Module, abc.ABC):
         for data, label in loader:
             if evaluation:
                 with torch.no_grad():
-                    loss, loss_info  = self.calc_loss(data, label)
+                    loss, loss_info = self.calc_loss(data, label)
             else:
                 loss, loss_info = self.calc_loss(data, label)
                 self.optimizer.zero_grad()

@@ -9,7 +9,6 @@ class ProsDataset(BaseDataset):
     test_ratio = 0.2
     split_seed = 42
 
-    input_dim = 8
     output_dim = 1
 
     def __init__(
@@ -17,28 +16,36 @@ class ProsDataset(BaseDataset):
             log_dir,
             window_size,
             overlap_ratio,
+            num_classes,
             validation=False,
             test=False,
-            num_classes=None,
+            signal_type='all',
             out_prefix='trial',
             device='cpu',
     ):
+        self.signal_type = signal_type
+        if self.signal_type == 'all':
+            signal_rng = slice(0, 8)
+        elif self.signal_type == 'emg':
+            signal_rng = slice(0, 4)
+        elif self.signal_type == 'eim':
+            signal_rng = slice(4, 8)
+        else:
+            raise ValueError(f'{self.signal_type} not in ["all", "emg", "eim]')
+
         super().__init__(
             log_dir=log_dir,
             window_size=window_size,
             overlap_ratio=overlap_ratio,
+            signal_rng=signal_rng,
             validation=validation,
             test=test,
             out_prefix=out_prefix,
         )
 
-        xb, yb = self.load_and_split()
-        yb = yb[..., 0].long()
-
-        if num_classes:
-            cb_tensor = F.one_hot(yb, num_classes=num_classes)
-        else:
-            cb_tensor = F.one_hot(yb)
+        xb, yb = self.load_and_split(num_classes)
+        yb = yb.long()
+        cb_tensor = F.one_hot(yb, num_classes=num_classes)
 
         # change device
         self.samples = xb.to(device)

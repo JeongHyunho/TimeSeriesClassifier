@@ -33,7 +33,12 @@ def run_log_session(c_socket: socket, buffer: BaseBuffer):
             raise RuntimeError('socket connection broken')
 
         else:
-            data = struct.unpack(f'>{buffer.data_len}f', received)
+            # try to receive and pass msg of incorrect bytes
+            try:
+                data = struct.unpack(f'>{buffer.data_len}f', received)
+            except struct.error as e:
+                logger.warning(e)
+                continue
             is_terminal = buffer.receive(data)
 
             # terminate log session
@@ -73,15 +78,20 @@ def run_control_session(c_socket: socket, controller: BaseController):
             raise RuntimeError('socket connection broken')
 
         else:
-            data = struct.unpack(f'>{controller.data_len}f', received)
+            # try to receive and pass msg of incorrect bytes
+            try:
+                data = struct.unpack(f'>{controller.data_len}f', received)
+            except struct.error as e:
+                logger.warning(e)
+                continue
             is_terminal, action = controller.receive(data)
 
             # send control signal to the client
             if action:
                 if controller.control_len > 1:
-                    c_socket.send(struct.pack(f'>{controller.control_len}i', *action))
+                    c_socket.send(struct.pack(f'>{controller.control_len}f', *action))
                 else:
-                    c_socket.send(struct.pack(f'>i', action))
+                    c_socket.send(struct.pack(f'>f', action))
 
             # terminate control session
             if is_terminal:

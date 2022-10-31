@@ -1,4 +1,5 @@
 import json
+import warnings
 from pathlib import Path
 
 import torch
@@ -15,9 +16,10 @@ class BaseDataset(Dataset):
 
     def __init__(
             self,
-            log_dir,
-            window_size,
-            overlap_ratio,
+            log_dir: Path,
+            window_size: int,
+            overlap_ratio: float,
+            signal_rng: slice,
             validation=False,
             test=False,
             out_prefix='trial',
@@ -26,6 +28,7 @@ class BaseDataset(Dataset):
         self.log_dir = log_dir
         self.window_size = window_size
         self.overlap_ration = overlap_ratio
+        self.signal_rng = signal_rng
         self.interval = int(window_size * (1 - overlap_ratio))
 
         assert not validation or not test, ValueError("only one of 'test' and 'validation' can be true")
@@ -37,25 +40,35 @@ class BaseDataset(Dataset):
         self.num_trials = len(self.trials)
         assert self.num_trials > 0, FileExistsError(f"no trials found in {self.log_dir}")
 
-    def load_and_split(self) -> (torch.Tensor, torch.Tensor):
+    def load_and_split(self, num_classes=None) -> (torch.Tensor, torch.Tensor):
         """ Load csv files and split all data into train/val/test batch tensors """
 
         # load data from csv files
         inp_list, label_list = [], []
 
         for trial in self.trials:
-            try:
-                from_csv = np.loadtxt(str(trial), delimiter=',', skiprows=0)
-            except ValueError:
+            if trial.suffix == '.csv':
                 from_csv = np.loadtxt(str(trial), delimiter=',', skiprows=1)
-            inp_list.append(from_csv[:, :self.input_dim])
-            label_list.append(from_csv[:, -self.output_dim:])
+                new_slice = slice(self.signal_rng.start+1, self.signal_rng.stop+1)
+                inp = from_csv[:, new_slice]
+            else:
+                raise NotImplementedError
+
+            label = from_csv[:, -self.output_dim]
+            if num_classes:
+                inp = inp[label < num_classes, :]
+                label = label[label < num_classes]
+            inp_list.append(inp)
+            label_list.append(label)
+
+            if np.any(label_list[-1] > 9):
+                print(trial)
 
         # split train/validation/test indices
         num_val_trials = int(self.num_trials * self.val_ratio)
         num_test_trials = int(self.num_trials * self.test_ratio)
-        assert  num_val_trials > 0, "too small trials, make trials larger or val_ratio small"
-        assert  num_test_trials > 0, "too small trials, make trials larger or test_ratio small"
+        assert num_val_trials > 0, f"too small trials, make trials larger or val_ratio smaller: total {self.num_trials}"
+        assert num_test_trials > 0, f"too small trials, make trials larger or test_ratio smaller: total {self.num_trials}"
         rng = np.random.default_rng(self.split_seed)
         val_indices = rng.choice(np.arange(self.num_trials), num_val_trials)
         test_indices = rng.choice(np.setdiff1d(np.arange(self.num_trials), val_indices), num_test_trials)
@@ -91,7 +104,9 @@ class BaseDataset(Dataset):
         xb_list, yb_list = [], []
         for x, y in zip(x_list, y_list):
             time_length = len(x)
-            assert time_length >= self.window_size, 'this trial has too short time-length'
+            if time_length < self.window_size:
+                warnings.warn(f'this trial has too short time-length: {time_length} < {self.window_size}')
+                continue
 
             start_t = 0
             while start_t + self.window_size <= time_length:
@@ -118,10 +133,6 @@ class BaseDataset(Dataset):
         raise NotImplementedError
 
     @property
-    def input_dim(self) -> int:
-        raise NotImplementedError
-
-    @property
     def output_dim(self) -> int:
         raise NotImplementedError
 
@@ -137,13 +148,14 @@ class BaseDataset(Dataset):
         # load data from csv files
         x_list, y_list = [], []
 
-        for idx in self.test_indices:
-            trial = self.trials[idx]
+        for trial in self.trials:
             try:
                 from_csv = np.loadtxt(str(trial), delimiter=',', skiprows=0)
+                x_list.append(from_csv[:, self.signal_rng])
             except ValueError:
                 from_csv = np.loadtxt(str(trial), delimiter=',', skiprows=1)
-            x_list.append(from_csv[:, :self.input_dim])
+                new_slice = slice(self.signal_rng.start, self.signal_rng.stop)
+                x_list.append(from_csv[:, new_slice])
             y_list.append(from_csv[:, -self.output_dim:])
 
         # standardization

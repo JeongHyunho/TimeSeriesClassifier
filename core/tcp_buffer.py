@@ -1,10 +1,12 @@
 import abc
-import re
 from pathlib import Path
 
 import numpy as np
 import pandas as pd
-import matplotlib.pyplot as plt
+
+import matplotlib
+matplotlib.use('Agg')
+from matplotlib import pyplot as plt
 from matplotlib.patches import Rectangle
 
 from core.tcp_base import BaseTcp
@@ -57,111 +59,86 @@ class BaseBuffer(BaseTcp, abc.ABC):
 class ProsthesisBuffer(BaseBuffer):
     """ Buffer for prosthesis experiment """
 
-    DATA_LEN = 14
-    TERRAIN_SIGNAL = {'standing': 0, 'even': 1, 'stair_up': 2, 'stair_down': 3, 'ramp_up': 4, 'ramp_down': 5}
+    DATA_LEN = 16
+    PHASE_INFO = {'standing': 0, 'early': 1, 'flat': 2, 'rising': 3, 'swing': 4}
     END_SIGNAL = 0
-
-    def __init__(self, config: dict, *args, **kwargs):
-        super().__init__(*args, **kwargs)
-        self.config = config
-
-        # check configuration
-        matched = [key for key in config['step_orders'].keys() if re.match(key, f'{self.trial_prefix}{self.trial_idx}')]
-        assert len(matched) == 1, f"empty or overlapped 'step orders' for {self.trial_idx} in {config}"
-        step_orders = config['step_orders'][matched[0]]
-
-        valid_orders = [v for v in step_orders.values() if v == v]
-        assert len(valid_orders) == len(set(valid_orders)), f'some step order of {self.trial_idx}-th trial are overlapped!'
-
-        self.step_orders = step_orders
-        self.logger.info(f'{self.trial_idx}-th {self.trial_prefix} step orders: '
-                         f'stair_up: {step_orders["stair_up"]}, stair_down: {step_orders["stair_down"]}, '
-                         f'ramp_up: {step_orders["ramp_up"]}, ramp_down: {step_orders["ramp_down"]}')
 
     @property
     def data_len(self):
         return self.DATA_LEN
 
     def is_terminal(self, data) -> bool:
-        return abs(data[-1] - self.END_SIGNAL) < 1e-6
+        return abs(data[-3] - self.END_SIGNAL) < 1e-6
 
     def post_process(self) -> pd.DataFrame:
         array = np.stack(self.data, axis=0)
+
+        # backup all logged data
+        bk_filename = self.main_dir.joinpath(self.trial_prefix + f'{self.trial_idx}_bk.npz')
+        np.savez(bk_filename, array)
+
+        # delete inaccurate last signals
+        label = array[:, 15]
+        stands = np.flatnonzero(np.diff((label == 0).astype('i')) == 1)
+        if np.any(stands):
+            del_start = stands[-1] + 1
+            if label[del_start - 1] == 2:
+                seconds = np.flatnonzero(np.diff((label == 2).astype('i')) == 1) + 1
+                if not np.any(seconds < del_start):
+                    self.logger.warn('no 2 index before last standing')
+                else:
+                    del_start = seconds[np.flatnonzero(seconds < del_start)[-1]]
+            array = array[:del_start]
+
+        # unfolding
+        n_steps = len(array)
+        self.logger.info(f'total {n_steps} steps recorded.')
         signal = array[:, :8]
         foot_switch = array[:, 8:11]
         angle = array[:, 11:13]
+        speed = array[:, 14].astype('i')
+        phase = array[:, 15].astype('i')
 
-        on_land = np.any(foot_switch > 0.5, axis=-1).astype('i')
-        to_list = np.flatnonzero(np.diff(on_land) == -1)
-        hs_list = np.flatnonzero(np.diff(on_land) == 1)
+        # (idx-1) at phase transition
+        trs_idx = np.flatnonzero(np.diff(phase) != 0)
+        trs_idx = np.hstack([trs_idx, n_steps - 1])
 
-        n_steps = len(to_list)
-        self.logger.info(f'total {n_steps} steps recorded.')
-
-        last_to = 0
-        label = self.TERRAIN_SIGNAL['even'] * np.ones(len(array))
-        for i_step, to in enumerate(to_list):
-
-            if i_step == 0:
-                label[last_to:to] = self.TERRAIN_SIGNAL['standing']
-            elif i_step == self.step_orders['stair_up']:
-                label[last_to:to] = self.TERRAIN_SIGNAL['stair_up']
-            elif i_step == self.step_orders['stair_down']:
-                label[last_to:to] = self.TERRAIN_SIGNAL['stair_down']
-            elif i_step == self.step_orders['ramp_up']:
-                label[last_to:to] = self.TERRAIN_SIGNAL['ramp_up']
-            elif i_step == self.step_orders['ramp_down']:
-                label[last_to:to] = self.TERRAIN_SIGNAL['ramp_down']
-
-            last_to = to
-
-        label[hs_list[-1]:] = self.TERRAIN_SIGNAL['standing']
+        label = phase + len(self.PHASE_INFO) * speed
+        label[label == 5] = 0
+        for c in [6, 7, 8, 9]:
+            label[label == c] = c - 1
 
         pd_data = pd.DataFrame(
-            np.concatenate([array[:, :-1], label[..., None]], axis=-1),
-            columns=[*[f'signal{i}' for i in range(8)], *[f'switch{j}' for j in range(3)], 'angle0', 'angle1', 'label'],
+            np.concatenate([signal, label[..., None]], axis=-1),
+            columns=[*[f'signal{i}' for i in range(8)], 'label'],
         )
 
         # debug plot
         def draw_step_box(ax: plt.Axes):
             ylim = ax.get_ylim()
-            last_to = 0
+            last_trs = 0
 
-            for i_step, to in enumerate(to_list):
-                if i_step == 0:
-                    c = f"C{self.TERRAIN_SIGNAL['standing']}"
-                elif i_step == self.step_orders['stair_up']:
-                    c = f"C{self.TERRAIN_SIGNAL['stair_up']}"
-                elif i_step == self.step_orders['stair_down']:
-                    c = f"C{self.TERRAIN_SIGNAL['stair_down']}"
-                elif i_step == self.step_orders['ramp_up']:
-                    c = f"C{self.TERRAIN_SIGNAL['ramp_up']}"
-                elif i_step == self.step_orders['ramp_down']:
-                    c = f"C{self.TERRAIN_SIGNAL['ramp_down']}"
-                else:
-                    last_to = to
-                    continue
-
-                box = Rectangle((last_to, ylim[0]), to - last_to + 1, ylim[1] - ylim[0], color=c, alpha=0.3)
+            for idx in trs_idx:
+                c = f"C{phase[idx]:.0f}"
+                box = Rectangle((last_trs, ylim[0]), idx - last_trs + 1, ylim[1] - ylim[0], color=c, alpha=0.3)
                 ax.add_patch(box)
-                last_to = to
+                last_trs = idx
 
-            srt, end = hs_list[-1], len(array)
-            box = Rectangle((srt, ylim[0]), end - srt + 1, ylim[1] - ylim[0],
-                            color=f"C{self.TERRAIN_SIGNAL['standing']}", alpha=0.3)
-            ax.add_patch(box)
-
-        fh = plt.figure(figsize=(4, 8))
-        plt.subplot(3, 1, 1)
-        plt.title(self.session_name + f' #{self.trial_idx}')
-        plt.plot(signal)
-        plt.ylabel('EMG/EIM')
+        fh = plt.figure(figsize=(4, 10))
+        plt.subplot(4, 1, 1)
+        plt.title(self.session_name + f' #{self.trial_idx}' + f' Speed: {speed[0]}')
+        plt.plot(signal[:, :4])
+        plt.ylabel('EMG')
         draw_step_box(plt.gca())
-        plt.subplot(3, 1, 2)
+        plt.subplot(4, 1, 2)
+        plt.plot(signal[:, 4:8])
+        plt.ylabel('EIM')
+        draw_step_box(plt.gca())
+        plt.subplot(4, 1, 3)
         plt.plot(foot_switch)
         plt.ylabel('Foot Switch')
         draw_step_box(plt.gca())
-        plt.subplot(3, 1, 3)
+        plt.subplot(4, 1, 4)
         plt.plot(angle)
         plt.ylabel('Angle')
         draw_step_box(plt.gca())

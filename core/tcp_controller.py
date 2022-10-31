@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import abc
+import datetime
 import json
+import math
+import time
 from pathlib import Path
 
 import numpy as np
@@ -17,6 +20,7 @@ class BaseController(BaseTcp, abc.ABC):
 
     def __init__(self, *args, **kwargs):
         super().__init__(*args, session_type='control', **kwargs)
+        self.log_dir = self.main_dir.parent / 'log'
         self.train_dir = self.main_dir.parent / 'train'
 
     @property
@@ -32,8 +36,8 @@ class BaseController(BaseTcp, abc.ABC):
 class ProsthesisController(BaseController):
     """ Controller for prosthesis """
 
-    data_len = 14
-    control_len = 1
+    data_len = 16
+    control_len = 2
 
     END_SIGNAL = 0
     NOT_READY = -1
@@ -44,7 +48,7 @@ class ProsthesisController(BaseController):
             *args,
             model_file: str = 'model.pt',
             variant_file: str = 'variant.json',
-            device = 'cpu',
+            device: str = 'cpu',
             **kwargs,
     ):
         super().__init__(*args, **kwargs)
@@ -59,7 +63,19 @@ class ProsthesisController(BaseController):
         # from variant file
         variant = json.loads(self.variant_file.read_text())
         self.model_arch = variant['arch']
-        self.input_dim = variant['input_dim']
+        self.signal_type = variant['signal_type']
+
+        if self.signal_type == 'all':
+            self.input_dim = 8
+            self.signal_rng = slice(0, 8)
+        elif self.signal_type == 'eim':
+            self.input_dim = 4
+            self.signal_rng = slice(0, 4)
+        elif self.signal_type == 'emg':
+            self.input_dim = 4
+            self.signal_rng = slice(4, 8)
+        else:
+            raise ValueError
 
         if self.model_arch == 'cnn':
             self.input_width = variant['cnn']['input_width']
@@ -69,25 +85,38 @@ class ProsthesisController(BaseController):
         self.model = torch.load(self.model_file, map_location=device)
         self.n_received = 0
 
+        # tracked mean, variance
+        self.mu = torch.zeros(self.input_dim).to(self.device)
+        self.var = torch.ones(self.input_dim).to(self.device)
+
+        if self.model_arch == 'lstm':
+            self.model.hc_n = None
+
         # load standardization parameters
-        stand_file = self.train_dir.joinpath('stand.json')
+        stand_file = self.log_dir.joinpath('stand.json')
         if stand_file.exists():
             s_dict = json.loads(stand_file.read_text())
             self.inp_mean = torch.FloatTensor(s_dict['mean']).to(device)
             self.inp_std = torch.FloatTensor(s_dict['std']).to(device)
         else:
-            self.logger.warn(f"standardization parameters not exiest at {stand_file}")
+            self.logger.warn(f"standardization parameters doesn't exist at {stand_file}")
             self.inp_mean = torch.zeros(self.input_dim).to(device)
             self.inp_std = torch.ones(self.input_dim).to(device)
 
+        self.time0 = datetime.datetime.now()
+
     def is_terminal(self, data) -> bool:
-        return abs(data[-1] - self.END_SIGNAL) < 1e-6
+        return abs(data[-3] - self.END_SIGNAL) < 1e-6
 
     @torch.no_grad()
     def receive(self, data) -> (bool, tuple | int):
         self.model.eval()
+        inp = torch.FloatTensor(data[self.signal_rng]).to(self.device)
+        self.mu = ((self.n_received + 1) * self.mu + inp) / (self.n_received + 2)
         d_tensor = (torch.FloatTensor(data[:self.input_dim]).to(self.device) - self.inp_mean) / (self.inp_std + 1e-6)
+        # d_tensor = (inp - self.mu) / (self.inp_std + 1e-6)
 
+        t0 = time.time()
         if self.model_arch == 'cnn':
             self.t_input = torch.cat([self.t_input[1:, ...], d_tensor[None, ...]], dim=0)
             if self.n_received >= self.input_width - 1:
@@ -98,6 +127,13 @@ class ProsthesisController(BaseController):
         else:   # lstm
             res = self.model(d_tensor[None, None, ...], hc0=self.model.hc_n)[0, 0, ...]
             pred = torch.argmax(res).item()
+        elapse = time.time() - t0
+
+        if pred != self.NOT_READY:
+            self.logger.debug(f'received: {d_tensor}')
+            self.logger.debug(f'tracked mu: {self.mu}')
+            self.logger.debug(f'log prob: {res.cpu().numpy().tolist()}')
+            self.logger.debug(f'elapse: {elapse}')
 
         self.predictions.append(pred)
         self.n_received += 1
@@ -106,7 +142,16 @@ class ProsthesisController(BaseController):
         if terminal:
             self.logger.info(f'terminal signal received!')
 
-        return terminal, pred
+        # pred to (speed, phase)
+        if pred in [0, 5]:
+            speed, phase = 0, 0
+        elif pred < 5:
+            speed, phase = 0, pred % 5
+        else:
+            speed, phase = 1, pred % 6
+        self.logger.debug(f'send control signal {pred}, ({speed}, {phase})!')
+
+        return terminal, (speed, phase)
 
     def save(self) -> Path:
         assert self.output_fmt == 'csv', NotImplementedError

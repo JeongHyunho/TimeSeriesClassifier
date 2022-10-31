@@ -88,7 +88,7 @@ if __name__ == '__main__':
         neptune_client = neptune.init(**neptune_config(config['target']), tags=[log_dir.parent.name, args.creation_time])
         neptune_client['job_dir'] = job_dir.name
         for k, v in nested_dict_to_dot_map_dict(config).items():
-            neptune_client[k] =v
+            neptune_client[k] = v
 
     start_time = datetime.now()
     n_wait = 0
@@ -126,7 +126,7 @@ if __name__ == '__main__':
                 neptune_client['train/' + k].log(v)
 
         # early stop protocol
-        if n_wait >= config['n_grace'] or abs(train_loss) > 1e5:
+        if n_wait >= config['n_grace']:
             exit_method = "early_stop"
             break
         elif abs(train_loss) > 1e5 or abs(val_loss) > 1e5:

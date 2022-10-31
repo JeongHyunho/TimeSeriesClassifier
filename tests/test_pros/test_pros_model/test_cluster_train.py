@@ -16,10 +16,9 @@ def test_classifier_cluster_train(make_session_fcn, train_py, train_config, clus
         name='test',
         num_samples=train_config['num_samples'],
         config=train_config,
-        py_args=f'--train_dir {tmp_path / "test" / "log"}',
     )
 
-    sorted_dir = trainer.stat.config_df.sort_values(by=['best_val_loss'])['job_dir']
+    sorted_dir = trainer.stat.config_df.dropna().sort_values(by=['best_val_loss'])['job_dir']
     for job_dir in sorted_dir[2:]:
         for pt_file in Path(job_dir).rglob('*.pt'):
             os.remove(pt_file)

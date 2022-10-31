@@ -1,7 +1,10 @@
 import abc
 import math
 
+import matplotlib.pyplot as plt
+import numpy as np
 import torch
+from sklearn.metrics import confusion_matrix
 from torch import nn, optim
 from torch.utils.data import DataLoader
 
@@ -39,7 +42,7 @@ class Classifier(nn.Module, abc.ABC):
 
     @torch.no_grad()
     def calc_acc(self, input, label):
-        """ Calulate accuracy on a data
+        """ Calculate accuracy on a data
 
         Args:
             input (torch.Tensor): input data tensor of (B, T, D)
@@ -57,7 +60,7 @@ class Classifier(nn.Module, abc.ABC):
         pred = self.forward(input)
         p_label = torch.argmax(pred, dim=-1)
         label_idx = torch.argmax(label, dim=-1)
-        acc = torch.sum(p_label == label_idx) / pred.nelement()
+        acc = torch.sum(p_label == label_idx) / p_label.nelement()
 
         return acc.item()
 
@@ -96,6 +99,44 @@ class Classifier(nn.Module, abc.ABC):
             print(f'[Epoch {epoch}] ({"Eval" if evaluation else "Train"}) Loss: {train_loss:.4f}')
 
         return train_loss
+
+    @torch.no_grad()
+    def confusion_matrix_figure(self, inp, label) -> plt.Figure:
+        """ draw confusion matrix
+
+        Args:
+            inp (torch.Tensor): input data tensor of (B, T, D)
+            label (torch.Tensor): one-hot vector tensor of (B, T, C)
+
+        Returns: matplotlib figure handle
+
+        """
+
+        self.eval()
+        if self.reduce_time:
+            label = label[:, -1, :]
+
+        idx_label = torch.argmax(label, dim=-1)
+        pred = self.forward(inp)
+        p_label = torch.argmax(pred, dim=-1)
+
+        conf_mat = confusion_matrix(idx_label.cpu().flatten(), p_label.cpu().flatten(), labels=np.arange(label.size(-1)))
+        conf_mat = conf_mat / np.sum(conf_mat, -1, keepdims=True)
+
+        fig = plt.figure(figsize=(5,5))
+        plt.set_cmap('Greys_r')
+        ax = fig.gca()
+        cax = ax.matshow(conf_mat)
+        cax.set_clim(vmin=0., vmax=1.)
+        fig.colorbar(cax)
+
+        for idx_r, row in enumerate(conf_mat):
+            for idx_c, el in enumerate(row):
+                text_c = np.ones(3) if el < 0.5 else np.zeros(3)
+                ax.text(idx_c, idx_r, f'{100 * el:.1f}',
+                        va='center', ha='center', c=text_c, size='x-large')
+
+        return fig
 
     @abc.abstractmethod
     def forward(self, inp, *args, **kwargs):
@@ -204,11 +245,20 @@ class CNNClassifier(Classifier):
     def kwargs_from_config(config):
         c_cnn = config['cnn']
 
+        if config['signal_type'] == 'all':
+            input_channels = 8
+        elif config['signal_type'] == 'emg':
+            input_channels = 4
+        elif config['signal_type'] == 'eim':
+            input_channels = 4
+        else:
+            raise ValueError(f"{config['signal_type']} not in ['all', 'emg', 'eim']")
+
         # assume two rounds cnn architecture
         kernel_sizes = [c_cnn['kernel_size0']] * c_cnn['n_conv_layer0'] \
                        + [c_cnn['kernel_size1']] * c_cnn['n_conv_layer1']
-        n_channels = [c_cnn['input_channels'] * c_cnn['k_channel0']] * c_cnn['n_conv_layer0'] \
-                     + [c_cnn['input_channels'] * c_cnn['k_channel1']] * c_cnn['n_conv_layer1']
+        n_channels = [input_channels * c_cnn['k_channel0']] * c_cnn['n_conv_layer0'] \
+                     + [input_channels * c_cnn['k_channel1']] * c_cnn['n_conv_layer1']
         pool_sizes = [0] * (c_cnn['n_conv_layer0'] - 1) + [c_cnn['pool_size']] \
                      + [0] * (c_cnn['n_conv_layer1'] - 1) + [c_cnn['pool_size']]
         pool_strides = [None] * (c_cnn['n_conv_layer0'] - 1) + [c_cnn['pool_stride']] \
@@ -218,10 +268,10 @@ class CNNClassifier(Classifier):
 
         kwargs = {
             'input_width': c_cnn['input_width'],
-            'input_channels': c_cnn['input_channels'],
+            'input_channels': input_channels,
             'kernel_sizes': kernel_sizes,
             'n_channels': n_channels,
-            'groups': c_cnn['input_channels'],
+            'groups': input_channels,
             'strides': [1] * (c_cnn['n_conv_layer0'] + c_cnn['n_conv_layer1']),
             'paddings': ['same'] * (c_cnn['n_conv_layer0'] + c_cnn['n_conv_layer1']),
             'fc_layers': [c_cnn['n_fc_units']] * c_cnn['n_fc_layers'],
@@ -310,8 +360,17 @@ class LSTMClassifier(Classifier):
         pre_layers = [c_lstm['n_pre_nodes']] * c_lstm['n_pre_layers']
         post_layers = [c_lstm['n_post_nodes']] * c_lstm['n_post_layers']
 
+        if config['signal_type'] == 'all':
+            input_dim = 8
+        elif config['signal_type'] == 'emg':
+            input_dim = 4
+        elif config['signal_type'] == 'eim':
+            input_dim = 4
+        else:
+            raise ValueError(f"{config['signal_type']} not in ['all', 'emg', 'eim']")
+
         kwargs = {
-            'input_dim': config['input_dim'],
+            'input_dim': input_dim,
             'output_dim': config['output_dim'],
             'feature_dim': c_lstm['feature_dim'],
             'hidden_dim': c_lstm['hidden_dim'],

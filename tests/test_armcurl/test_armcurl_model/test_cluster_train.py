@@ -16,7 +16,8 @@ def test_estimator_cluster_train(make_session_fcn, train_py, train_config, clust
         name='test',
         num_samples=train_config['num_samples'],
         config=train_config,
-        py_args=f'--log_dir {tmp_path / "test" / "log"} --time_limit 1',
+        # py_args=f'--time_limit 1',
+        py_args='',
     )
 
     config_df = trainer.stat.config_df.dropna().sort_values(by=['best_val_loss'])
