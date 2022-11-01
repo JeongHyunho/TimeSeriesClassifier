@@ -2,7 +2,7 @@ from sys import platform
 
 
 # tcp setup
-ADDR = '172.16.0.12'
+ADDR = '192.168.0.5'
 PORT = 9107 # 0915
 
 # logging setup

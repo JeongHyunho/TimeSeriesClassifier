@@ -60,7 +60,7 @@ class ProsthesisBuffer(BaseBuffer):
     """ Buffer for prosthesis experiment """
 
     DATA_LEN = 16
-    PHASE_INFO = {'standing': 0, 'early': 1, 'flat': 2, 'rising': 3, 'swing': 4}
+    PHASE_INFO = {'standing': 0, 'flat': 1, 'rising': 2, 'swing': 3}
     END_SIGNAL = 0
 
     @property
@@ -77,19 +77,6 @@ class ProsthesisBuffer(BaseBuffer):
         bk_filename = self.main_dir.joinpath(self.trial_prefix + f'{self.trial_idx}_bk.npz')
         np.savez(bk_filename, array)
 
-        # delete inaccurate last signals
-        label = array[:, 15]
-        stands = np.flatnonzero(np.diff((label == 0).astype('i')) == 1)
-        if np.any(stands):
-            del_start = stands[-1] + 1
-            if label[del_start - 1] == 2:
-                seconds = np.flatnonzero(np.diff((label == 2).astype('i')) == 1) + 1
-                if not np.any(seconds < del_start):
-                    self.logger.warn('no 2 index before last standing')
-                else:
-                    del_start = seconds[np.flatnonzero(seconds < del_start)[-1]]
-            array = array[:del_start]
-
         # unfolding
         n_steps = len(array)
         self.logger.info(f'total {n_steps} steps recorded.')
@@ -104,8 +91,8 @@ class ProsthesisBuffer(BaseBuffer):
         trs_idx = np.hstack([trs_idx, n_steps - 1])
 
         label = phase + len(self.PHASE_INFO) * speed
-        label[label == 5] = 0
-        for c in [6, 7, 8, 9]:
+        label[label == 4] = 0
+        for c in [5, 6, 7, 8]:
             label[label == c] = c - 1
 
         pd_data = pd.DataFrame(

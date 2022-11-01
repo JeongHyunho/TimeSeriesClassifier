@@ -10,7 +10,7 @@ from pathlib import Path
 from core import conf
 from core.session import run_log_session, run_control_session
 from core.tcp_buffer import ProsthesisBuffer, ArmCurlBuffer
-from core.tcp_controller import ProsthesisController, ArmCurlController
+from core.tcp_controller import ProsthesisController, ArmCurlController, DummyProsthesisController
 
 logging.basicConfig(
     format='[%(name)s] %(asctime)s %(levelname)s:%(message)s',
@@ -29,12 +29,16 @@ if __name__ == '__main__':
     parser.add_argument('--job_dir', type=str, default=None, help='trained model directory, required for control')
     parser.add_argument('--trial_idx', type=str, default=None, help='trial idx for both log and control')
     parser.add_argument('--debug', action='store_true', default=False, help='set logger debug')
+    parser.add_argument('--dummy', action='store_true', default=False, help='flag for dummy controller')
     args = parser.parse_args()
 
     target = args.target
     if target == 'pros':
         buffer_cls = ProsthesisBuffer
-        controller_cls = ProsthesisController
+        if args.dummy:
+            controller_cls = DummyProsthesisController
+        else:
+            controller_cls = ProsthesisController
         buffer_kwargs = {}
     elif target == 'armcurl':
         buffer_cls = ArmCurlBuffer
@@ -44,7 +48,7 @@ if __name__ == '__main__':
         raise ValueError(f"unexpected experiment target, got {target}")
 
     se_name = args.name
-    if args.type == 'control' and args.job_dir is None:
+    if args.type == 'control' and args.job_dir is None and not args.dummy:
         raise ValueError("for control session 'job_dir' is required")
 
     logger = logging.getLogger('session')
@@ -54,6 +58,7 @@ if __name__ == '__main__':
     logger.info(f'open tcp server on {conf.ADDR}:{conf.PORT}')
     sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
     sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock.setsockopt(socket.IPPROTO_TCP, socket.TCP_NODELAY, 1)
     sock.bind((conf.ADDR, conf.PORT))
     sock.listen(5)
 

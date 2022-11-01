@@ -1,13 +1,13 @@
 {
   "arch": ["lstm"],
-  "num_samples": 300,
+  "num_samples": 100,
   "epoch": 2000,
   "n_grace": 200,
   "time_limit": 10,
   "signal_type": "all",
 
   "target": "pros",
-  "output_dim": 5,
+  "output_dim": 7,
   "overlap_ratio": 0.9,
   "device": "cuda",
 

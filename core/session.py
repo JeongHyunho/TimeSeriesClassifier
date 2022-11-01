@@ -5,7 +5,6 @@ from socket import socket
 from core.tcp_controller import BaseController
 from core.tcp_buffer import BaseBuffer
 
-
 TIMEOUT_SEC = 20
 
 
@@ -20,10 +19,15 @@ def run_log_session(c_socket: socket, buffer: BaseBuffer):
 
     logger = logging.getLogger('session')
     c_socket.settimeout(TIMEOUT_SEC)
+    recv_len = 4 * buffer.data_len
 
     while True:
+        received = c_socket.recv(recv_len)
         try:
-            received = c_socket.recv(4 * buffer.data_len)
+            while 0 < len(received) < recv_len:
+                logger.debug(f'original received: {len(received)}')
+                received += c_socket.recv(recv_len - len(received))
+            logger.debug(f'received: {len(received)}')
         except KeyboardInterrupt:
             logger.info('interrupt! escape control loop ...')
             break
@@ -62,10 +66,15 @@ def run_control_session(c_socket: socket, controller: BaseController):
 
     logger = logging.getLogger('session')
     c_socket.settimeout(TIMEOUT_SEC)
+    recv_len = 4 * controller.data_len
 
     while True:
         try:
-            received = c_socket.recv(4 * controller.data_len)
+            received = c_socket.recv(recv_len)
+            while 0 < len(received) < recv_len:
+                logger.debug(f'original received: {len(received)}')
+                received += c_socket.recv(recv_len - len(received))
+
         except KeyboardInterrupt:
             logger.info('interrupt! escape control loop ...')
             break

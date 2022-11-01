@@ -143,12 +143,12 @@ class ProsthesisController(BaseController):
             self.logger.info(f'terminal signal received!')
 
         # pred to (speed, phase)
-        if pred in [0, 5]:
+        if pred in [0, 4]:
             speed, phase = 0, 0
-        elif pred < 5:
-            speed, phase = 0, pred % 5
+        elif pred < 4:
+            speed, phase = 0, pred
         else:
-            speed, phase = 1, pred % 6
+            speed, phase = 1, pred % 4
         self.logger.debug(f'send control signal {pred}, ({speed}, {phase})!')
 
         return terminal, (speed, phase)
@@ -160,6 +160,33 @@ class ProsthesisController(BaseController):
         df.to_csv(self.out_filename)
 
         return self.out_filename
+
+
+class DummyProsthesisController(ProsthesisController):
+
+    def __init__(
+            self,
+            model_dir: str,
+            *args,
+            model_file: str = 'model.pt',
+            variant_file: str = 'variant.json',
+            device: str = 'cpu',
+            **kwargs,
+    ):
+        super(ProsthesisController, self).__init__(*args, **kwargs)
+
+    def receive(self, data) -> (bool, tuple | int):
+        terminal = self.is_terminal(data)
+        speed = data[-2]
+        phase = data[-1]
+
+        self.logger.debug(f'received: {data}')
+        self.logger.debug(f'send msg: {phase}')
+
+        return terminal, (speed, phase)
+
+    def save(self):
+        pass
 
 
 class ArmCurlController(ProsthesisController):

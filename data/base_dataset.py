@@ -55,9 +55,9 @@ class BaseDataset(Dataset):
                 raise NotImplementedError
 
             label = from_csv[:, -self.output_dim]
-            if num_classes:
-                inp = inp[label < num_classes, :]
-                label = label[label < num_classes]
+            # if num_classes:
+            #     inp = inp[label < num_classes, :]
+            #     label = label[label < num_classes]
             inp_list.append(inp)
             label_list.append(label)
 
