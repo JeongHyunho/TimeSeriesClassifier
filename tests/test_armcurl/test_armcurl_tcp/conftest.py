@@ -26,26 +26,27 @@ def control_len() -> int:
 
 
 @pytest.fixture(scope='package')
-def create_client_fn(stream_data, address, port, data_len, control_len) -> Callable:
-    def _create_client(type='log'):
+def create_client_fn(stream_data, address, recv_port, send_port, data_len, control_len) -> Callable:
+
+    def _create_client(type):
+        assert type in ['receive', 'send']
         logger = logging.getLogger('test.client')
+        recv_len = 4 * data_len
 
         cli_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        port = recv_port if type == 'receive' else send_port
         cli_sock.connect((address, port))
 
         for i, array in enumerate(stream_data):
-            data_send = struct.pack(f'>{data_len}f', *array)
-            cli_sock.send(data_send)
-
-            if type == 'log':
-                pass
-            elif type == 'control':
-                if control_len > 0:
-                    data_recv = cli_sock.recv(4 * data_len)
-                    signal = struct.unpack(f'>{control_len}i', data_recv)
-                    logger.debug(f'#{i} received: {signal}')
-            else:
-                raise ValueError(f"type should be 'log' or 'control', but got {type}")
+            if type == 'receive':
+                data_send = struct.pack(f'>{data_len}f', *array)
+                cli_sock.sendall(data_send)
+            elif type == 'send':
+                data_recv = cli_sock.recv(4 * data_len)
+                while 0 < len(data_recv) < recv_len:
+                    data_recv += cli_sock.recv(recv_len - len(data_recv))
+                signal = struct.unpack(f'>{control_len}i', data_recv)
+                logger.debug(f'#{i} received: {signal}')
 
         cli_sock.close()
 
@@ -53,7 +54,7 @@ def create_client_fn(stream_data, address, port, data_len, control_len) -> Calla
 
 
 @pytest.fixture(scope='package')
-def create_train_dir_fcn(input_dim, train_config) -> Callable:
+def create_train_dir_fcn(input_dim, train_config, use_gpu) -> Callable:
     def create_train_dir(session_dir: Path, n_jobs=5) -> List[str]:
         s_dict = json.dumps({'mean': [0] * input_dim, 'std': [1] * input_dim})
         (session_dir / 'train').mkdir(parents=True)
@@ -62,6 +63,7 @@ def create_train_dir_fcn(input_dim, train_config) -> Callable:
         for i_job in range(n_jobs):
             config = dot_map_dict_to_nested_dict(train_config)
             config = sample_config(config)
+            config['device'] = 'cuda' if use_gpu else 'cpu'
 
             if config['arch'] == 'cnn':
                 kwargs = CNNEstimator.kwargs_from_config(config)

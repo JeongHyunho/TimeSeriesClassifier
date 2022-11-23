@@ -385,3 +385,74 @@ class LSTMClassifier(Classifier):
         }
 
         return kwargs
+
+
+class MLPClassifier(Classifier):
+
+    def __init__(
+            self,
+
+            input_dim,
+            output_dim,
+            input_width,
+            hidden_nodes,
+            act_fcn='relu',
+            lr=1e-3,
+            norm='none',
+            device='cuda',
+    ):
+        super().__init__(reduce_time=True)
+        assert norm in ['none', 'batch', 'layer']
+
+        self.mlp = construct_mlp(
+            hidden_nodes,
+            input_width * input_dim,
+            output_dim,
+            norm_type=norm,
+            act_fcn=act_fcn,
+        )
+
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+        self.to(device)
+
+    def forward(self, inp, **kwargs):
+        """ predict via MLP
+
+        Args:
+            inp (torch.Tensor): input data tensor of (B, T, D)
+
+        Returns:
+            torch.Tensor: result tensor of (B, C)
+
+        """
+
+        inp_for_mlp = torch.flatten(inp, start_dim=1)
+        oup = self.mlp(inp_for_mlp)
+
+        return oup
+
+    @staticmethod
+    def kwargs_from_config(config):
+        c_mlp = config['mlp']
+
+        if config['signal_type'] == 'all':
+            input_dim = 8
+        elif config['signal_type'] == 'emg':
+            input_dim = 4
+        elif config['signal_type'] == 'eim':
+            input_dim = 4
+        else:
+            raise ValueError(f"{config['signal_type']} not in ['all', 'emg', 'eim']")
+
+        kwargs = {
+            'input_dim': input_dim,
+            'output_dim': config['output_dim'],
+            'input_width': c_mlp['input_width'],
+            'hidden_nodes': c_mlp['hidden_nodes'],
+            'act_fcn': 'relu',
+            'norm': c_mlp['norm'],
+            'lr': c_mlp['lr'],
+            'device': config['device'],
+        }
+
+        return kwargs

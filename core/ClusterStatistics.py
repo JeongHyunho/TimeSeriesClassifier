@@ -16,8 +16,8 @@ class ClusterStatistics:
         self.creation_time = datetime.now()
         self.logger = logging.getLogger(".".join([logger_root, 'stat']))
 
-        # add state columns
         self.config_df.insert(len(self.config_df.columns), 'state', [float('nan')] * len(self.config_df))
+        self.config_df.insert(len(self.config_df.columns), 'node', [float('nan')] * len(self.config_df))
 
     def update_state(self, job_id, kv_dict: dict):
         idx = self.config_df['job_id'] == job_id
@@ -57,7 +57,8 @@ class ClusterStatistics:
 
         # add failed job info
         failed_idx = self.config_df['state'] == 'FAILED'
-        failed_jobs = [str(j) for j in self.config_df[failed_idx]['job_id']]
+        failed_jobs = [f'{str(job)}({node})' for job, node
+                       in zip(self.config_df[failed_idx]['job_id'], self.config_df[failed_idx]['node'])]
         board += dedent(f"""
         Failed job ids: {', '.join(failed_jobs)}
         """)

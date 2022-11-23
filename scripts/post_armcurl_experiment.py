@@ -29,30 +29,37 @@ def post_process(session_dir: Path, log_dir: Path, model_dir: Path):
     variant_str = (model_dir / 'variant.json').read_text()
     varint = json.loads(variant_str)
     (post_dir / 'variant.json').write_text(variant_str)
-    window_size = varint['cnn']['input_width'] if varint['arch'] == 'cnn' else varint['lstm']['window_size']
+    if varint['arch'] == 'mlp':
+        w_size = varint['mlp']['input_width']
+    elif varint['arch'] == 'cnn':
+        w_size = varint['cnn']['input_width']
+    else:
+        w_size = varint['lstm']['window_size']
     overlap_ratio = varint['overlap_ratio']
-    dataset = ArmCurlDataset(log_dir=log_dir, window_size=window_size, overlap_ratio=overlap_ratio, device='cpu')
+    dataset = ArmCurlDataset(log_dir=log_dir, window_size=w_size, overlap_ratio=overlap_ratio, device='cpu')
     test_x, test_y = dataset.get_test_stream(device='cpu')
 
     # prediction
     model = torch.load(model_dir / 'best_model.pt', map_location='cpu')
     model.eval()
     for idx, (x, y) in enumerate(zip(test_x, test_y)):
-        if varint['arch'] == 'cnn':
-            cnn_in = batch_by_window(x, window_size)
+        if varint['arch'] in ['mlp', 'cnn']:
+            cnn_in = batch_by_window(x, w_size)
             pred = model(cnn_in)
-            pred = torch.cat([torch.zeros(window_size - 1, pred.size(dim=-1)), pred], dim=0)
-
+            pred = torch.cat([torch.nan * torch.ones(w_size - 1, pred.size(dim=-1)), pred], dim=0)
         else:
             pred = model(x[None, ...])[0, ...]
 
         theta, torque = y.numpy().T
         theta_pred, torque_pred = pred.numpy().T
 
+        theta_rmse = np.sqrt(np.nansum((theta - theta_pred) ** 2) / (1. - np.isnan(theta_pred)).sum())
+        torque_rmse = np.sqrt(np.nansum((torque - torque_pred) ** 2) / (1. - np.isnan(torque_pred)).sum())
+
         # save as figure
         fh = plt.figure(figsize=(4, 6))
         plt.subplot(2, 1, 1)
-        plt.title(f'test sample #{idx}')
+        plt.title(f'test sample #{idx}\nTheta RMSE: {theta_rmse:.2f}\nTorque RMSE: {torque_rmse:.2f}')
         plt.plot(np.vstack([theta, theta_pred]).T, label=['data', 'pred'])
         plt.legend()
         plt.ylabel('Theta')
@@ -76,8 +83,8 @@ def post_process(session_dir: Path, log_dir: Path, model_dir: Path):
 
 if __name__ == '__main__':
     output_dir = Path(conf.OUTPUT_DIR)
-    session_name = 'armcurl_0916_0'
-    job_dir = 'job4799'
+    session_name = 'armcurl_1123'
+    job_dir = 'job6653'
 
     session_dir = output_dir / session_name
     log_dir = session_dir / 'log'

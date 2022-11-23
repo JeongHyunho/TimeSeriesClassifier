@@ -6,6 +6,16 @@ import pytest
 import numpy as np
 
 
+def pytest_addoption(parser):
+    parser.addoption("--signal_type", type=str, choices=['all', 'emg', 'eim'], default='all',
+                     help='type of signal, it determines input_dim')
+
+
+@pytest.fixture(scope="session")
+def signal_type(pytestconfig):
+    return pytestconfig.getoption("signal_type")
+
+
 @pytest.fixture(scope='session')
 def time_length() -> int:
     return 500
@@ -22,13 +32,13 @@ def input_dim(signal_type) -> int:
 
 
 @pytest.fixture(scope='session')
-def signal_dim(signal_type) -> int:
+def signal_dim() -> int:
     return 8
 
 
 @pytest.fixture(scope='session')
 def output_dim() -> int:
-    return 5
+    return 4
 
 
 @pytest.fixture(scope='session')
@@ -42,7 +52,7 @@ def overlap_ratio() -> float:
 
 
 @pytest.fixture(scope='session')
-def stream_data(time_length, signal_dim) -> np.ndarray:
+def stream_data(time_length, signal_dim, output_dim) -> np.ndarray:
     signal = np.random.randn(signal_dim, time_length)
     footswitch = np.cos(np.arange(time_length) * 5 * 2 * np.pi / time_length) > 0.
     angle = np.random.randn(2, time_length)
@@ -51,11 +61,11 @@ def stream_data(time_length, signal_dim) -> np.ndarray:
 
     phase = []
     last_idx = 0
-    trs = np.sort(np.random.choice(time_length, 4, replace=False))
+    trs = np.sort(np.random.choice(time_length, output_dim-1, replace=False))
     for p, idx in enumerate(trs):
         phase = np.hstack([phase, p * np.ones(idx - last_idx)])
         last_idx = idx
-    phase = np.hstack([phase, 4 * np.ones(time_length - last_idx)])
+    phase = np.hstack([phase, (output_dim - 1) * np.ones(time_length - last_idx)])
 
     data = np.vstack([signal, *[[footswitch] * 3], angle, is_terminal, speed, phase]).T
 

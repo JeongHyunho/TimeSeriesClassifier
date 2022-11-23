@@ -79,9 +79,10 @@ def load_prosthesis_loaders(batch_size, log_dir, window_size, overlap_ratio, num
     return train_dl, val_dl, test_dl
 
 
-def load_armcurl_loaders(batch_size, log_dir, window_size, overlap_ratio, device='cuda')\
+def load_armcurl_loaders(batch_size, log_dir, window_size, overlap_ratio, signal_type, device='cuda')\
         -> (DataLoader, DataLoader, DataLoader):
-    ds_kwargs = {'log_dir': log_dir, 'window_size': window_size, 'overlap_ratio': overlap_ratio, 'device': device}
+    ds_kwargs = {'log_dir': log_dir, 'window_size': window_size, 'overlap_ratio': overlap_ratio,
+                 'signal_type': signal_type, 'device': device}
     dl_kwargs = {'shuffle': True, 'batch_size': batch_size}
 
     train_ds = ArmCurlDataset(**ds_kwargs)

@@ -3,12 +3,16 @@ from __future__ import annotations
 import abc
 import math
 import numpy as np
+from pathlib import Path
 
 import torch
+from matplotlib import pyplot as plt
 from torch import nn, optim
-from torch.utils.data import DataLoader
+from torch.utils.data import DataLoader, Dataset
 from typing import List, Tuple, Dict
 
+from core.util import batch_by_window
+from data.base_dataset import BaseDataset
 from models import identity
 from models.networks import LayerNormLSTM, construct_mlp, Basic1DCNN
 
@@ -21,32 +25,18 @@ class Estimator(nn.Module, abc.ABC):
             output_dim: int,
             reduce_time: bool,
             loss_weight: list | np.ndarray | torch.Tensor,
-            mask_channel: int | None,
     ):
         super().__init__()
         self.input_dim = input_dim
         self.output_dim = output_dim
         self.reduce_time = reduce_time
-        self.mask_channel = mask_channel
 
-        if type(loss_weight) in [list, np.ndarray]:
+        if type(loss_weight) in [tuple, list, np.ndarray]:
             loss_weight = torch.FloatTensor(loss_weight)
         assert loss_weight.shape == (output_dim,), \
             f"unexpected shape of 'loss_weight', ({output_dim},) required, but got {loss_weight.shape}"
 
         self.register_buffer('loss_weight', loss_weight)
-
-        if self.mask_channel is not None:
-            self.register_forward_pre_hook(self._mask_channel)
-
-    def _mask_channel(self, _, inp_tuple: Tuple[torch.Tensor]) -> Tuple[torch.Tensor]:
-        """ Make marked index data to 0 """
-        inp_tensor = inp_tuple[0]
-        mask = torch.zeros(self.input_dim).to(inp_tensor)
-        mask[self.mask_channel] = 1.
-        inp_tensor.masked_fill_(mask.ge(0.5), 0.)
-
-        return (inp_tensor,)
 
     def calc_loss(self, input, label) -> Tuple[torch.Tensor, Dict[str, torch.Tensor]]:
         """ Calculate loss of model on a data
@@ -166,6 +156,63 @@ class Estimator(nn.Module, abc.ABC):
         """
         raise NotImplementedError
 
+    @torch.no_grad()
+    def post_process(self, dataset: BaseDataset, post_dir, w_size=None, y_labels=None, device='cpu') -> List[Path]:
+        """ evaluate model and save results
+
+        Args:
+            dataset (Dataset): dataset of processed data
+            post_dir (Path): directory for saving results
+            w_size (int): required if model input is window of tensor
+            y_labels (List[str]): y-axis labels in plot
+            device (str): device for input/output tensors of model
+
+        Returns:
+            List[Path]: result file path
+
+        """
+
+        files = []
+        samples, labels = dataset.get_test_stream(device=device)
+
+        self.eval()
+        for idx, (x, y) in enumerate(zip(samples, labels)):
+            if self.reduce_time:
+                assert w_size is not None, f"'w_size' is required for this model {type(self)}"
+                inp = batch_by_window(x, w_size)
+                pred = self(inp)
+                nan_tensor = torch.nan * torch.ones(w_size -1, pred.size(-1))
+                pred = torch.cat([nan_tensor.to(device), pred], dim=0)
+            else:
+                pred = self(x[None, ...])[0, ...]
+
+            p_np, y_np = pred.cpu().numpy(), y.cpu().numpy()
+
+            fh = plt.figure(figsize=(4, 2 + 2 * self.output_dim))
+            plt.subplot(self.output_dim, 1, 1)
+
+            for out_idx in range(self.output_dim):
+                plt.subplot(self.output_dim, 1, out_idx + 1)
+                plt.plot(np.vstack([p_np[:, out_idx], y_np[:, out_idx]]).T, label=['data', 'pred'])
+
+                if labels is not None:
+                    plt.ylabel(y_labels[out_idx])
+
+                if out_idx == 0:
+                    plt.title(f'#{idx}')
+                    plt.legend()
+                elif out_idx == self.output_dim - 1:
+                    plt.xlabel('index')
+            plt.tight_layout()
+
+            img_filename = post_dir.joinpath(f'postprocess{idx}.png')
+            files.append(img_filename)
+            fh.savefig(img_filename)
+            plt.close()
+        self.train()
+
+        return files
+
 
 class CNNEstimator(Estimator):
     def __init__(
@@ -181,8 +228,7 @@ class CNNEstimator(Estimator):
 
             fc_layers,
             output_dim,
-            loss_weight=0.5,
-            mask_channel=None,
+            loss_weight=(0.5, 0.5),
 
             cnn_norm='none',
             hidden_init=None,
@@ -204,8 +250,8 @@ class CNNEstimator(Estimator):
             output_dim=output_dim,
             reduce_time=True,
             loss_weight=loss_weight,
-            mask_channel=mask_channel,
         )
+        self.input_width = input_width
 
         self.cnn = Basic1DCNN(
             input_width=input_width,
@@ -256,11 +302,20 @@ class CNNEstimator(Estimator):
     def kwargs_from_config(config):
         c_cnn = config['cnn']
 
+        if config['signal_type'] == 'all':
+            input_channels = 3
+        elif config['signal_type'] == 'emg':
+            input_channels = 2
+        elif config['signal_type'] == 'hall':
+            input_channels = 1
+        else:
+            raise ValueError(f"{config['signal_type']} not in ['all', 'emg', 'hall']")
+
         # assume two rounds cnn architecture
         kernel_sizes = [c_cnn['kernel_size0']] * c_cnn['n_conv_layer0'] \
                        + [c_cnn['kernel_size1']] * c_cnn['n_conv_layer1']
-        n_channels = [c_cnn['input_channels'] * c_cnn['k_channel0']] * c_cnn['n_conv_layer0'] \
-                     + [c_cnn['input_channels'] * c_cnn['k_channel1']] * c_cnn['n_conv_layer1']
+        n_channels = [input_channels * c_cnn['k_channel0']] * c_cnn['n_conv_layer0'] \
+                     + [input_channels * c_cnn['k_channel1']] * c_cnn['n_conv_layer1']
 
         loss_weight= [config['loss_weight0'], 1 - config['loss_weight0']]
 
@@ -273,16 +328,15 @@ class CNNEstimator(Estimator):
 
         kwargs = {
             'input_width': c_cnn['input_width'],
-            'input_channels': c_cnn['input_channels'],
+            'input_channels': input_channels,
             'kernel_sizes': kernel_sizes,
             'n_channels': n_channels,
-            'groups': c_cnn['input_channels'],
+            'groups': input_channels,
             'strides': [1] * (c_cnn['n_conv_layer0'] + c_cnn['n_conv_layer1']),
             'paddings': ['same'] * (c_cnn['n_conv_layer0'] + c_cnn['n_conv_layer1']),
             'fc_layers': [c_cnn['n_fc_units']] * c_cnn['n_fc_layers'],
             'output_dim': config['output_dim'],
             'loss_weight': loss_weight,
-            'mask_channel': config['mask_channel'],
             'cnn_norm': c_cnn['cnn_norm'],
             'pool_type': 'max',
             'pool_sizes': pool_sizes,
@@ -303,8 +357,7 @@ class LSTMEstimator(Estimator):
             input_dim,
             output_dim,
             feature_dim,
-            loss_weight=0.5,
-            mask_channel=None,
+            loss_weight=(0.5, 0.5),
             hidden_dim=256,
             n_lstm_layers=1,
             pre_layers=None,
@@ -321,7 +374,6 @@ class LSTMEstimator(Estimator):
             output_dim=output_dim,
             reduce_time=False,
             loss_weight=loss_weight,
-            mask_channel=mask_channel,
         )
         assert lstm_norm in ['none', 'layer']
         assert fc_norm in ['none', 'layer']
@@ -376,12 +428,20 @@ class LSTMEstimator(Estimator):
         pre_layers = [c_lstm['n_pre_nodes']] * c_lstm['n_pre_layers']
         post_layers = [c_lstm['n_post_nodes']] * c_lstm['n_post_layers']
 
+        if config['signal_type'] == 'all':
+            input_dim = 3
+        elif config['signal_type'] == 'emg':
+            input_dim = 2
+        elif config['signal_type'] == 'hall':
+            input_dim = 1
+        else:
+            raise ValueError(f"{config['signal_type']} not in ['all', 'emg', 'hall']")
+
         kwargs = {
-            'input_dim': config['input_dim'],
+            'input_dim': input_dim,
             'output_dim': config['output_dim'],
             'feature_dim': c_lstm['feature_dim'],
             'loss_weight': loss_weight,
-            'mask_channel': config['mask_channel'],
             'hidden_dim': c_lstm['hidden_dim'],
             'n_lstm_layers': c_lstm['n_lstm_layers'],
             'lstm_norm': c_lstm['lstm_norm'],
@@ -390,6 +450,87 @@ class LSTMEstimator(Estimator):
             'p_drop': c_lstm['p_drop'],
             'fc_norm': c_lstm['fc_norm'],
             'lr': c_lstm['lr'],
+            'device': config['device'],
+        }
+
+        return kwargs
+
+
+class MLPEstimator(Estimator):
+    """ Multi-layered perceptron estimator """
+
+    def __init__(
+            self,
+            input_dim: int,
+            output_dim: int,
+            input_width: int,
+            hidden_nodes: List[int],
+            loss_weight: tuple | list = (0.5, 0.5),
+            act_fcn: str = 'relu',
+            lr: float = 1e-3,
+            norm: str = 'none',
+            device: str = 'cuda',
+    ):
+        super().__init__(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            reduce_time=True,
+            loss_weight=loss_weight,
+        )
+        assert norm in ['none', 'batch', 'layer']
+        self.input_width = input_width
+
+        self.mlp = construct_mlp(
+            hidden_nodes,
+            input_width * input_dim,
+            output_dim,
+            norm_type=norm,
+            act_fcn=act_fcn,
+        )
+
+        self.optimizer = optim.Adam(self.parameters(), lr=lr)
+        self.to(device)
+
+    def forward(self, inp, **kwargs):
+        """ predict vial MLP
+
+        Args:
+            inp: (torch.Tensor): input data tensor of (B, T, D)
+
+        Returns:
+            torch.Tensor: result tensor of (B, O)
+
+        """
+
+        inp_for_mlp = torch.flatten(inp, start_dim=1)
+        oup = self.mlp(inp_for_mlp)
+
+        return oup
+
+    @staticmethod
+    def kwargs_from_config(config):
+        c_mlp = config['mlp']
+
+        if config['signal_type'] == 'all':
+            input_dim = 3
+        elif config['signal_type'] == 'emg':
+            input_dim = 2
+        elif config['signal_type'] == 'hall':
+            input_dim = 1
+        else:
+            raise ValueError(f"{config['signal_type']} not in ['all', 'emg', 'hall']")
+
+        loss_weight = [config['loss_weight0'], 1 - config['loss_weight0']]
+
+        kwargs = {
+            'input_dim': input_dim,
+            'output_dim': config['output_dim'],
+            'input_width': c_mlp['input_width'],
+            'hidden_nodes': c_mlp['hidden_nodes'],
+            'loss_weight': loss_weight,
+            'act_fcn': 'relu',
+            'norm': c_mlp['norm'],
+            'lr': c_mlp['lr'],
             'device': config['device'],
         }
 

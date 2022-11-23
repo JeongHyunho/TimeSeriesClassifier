@@ -22,6 +22,7 @@ class ProsDataset(BaseDataset):
             signal_type='all',
             out_prefix='trial',
             device='cpu',
+            preprocess='preprocess.json',
     ):
         self.signal_type = signal_type
         if self.signal_type == 'all':
@@ -41,6 +42,7 @@ class ProsDataset(BaseDataset):
             validation=validation,
             test=test,
             out_prefix=out_prefix,
+            preprocess=preprocess,
         )
 
         xb, yb = self.load_and_split(num_classes)

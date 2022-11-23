@@ -16,7 +16,7 @@ from argparse import ArgumentParser
 from torch.utils.data import DataLoader
 
 sys.path.append(str(Path(__file__).parent.joinpath('..')))
-from models.gait_phase_classifier import CNNClassifier, LSTMClassifier, Classifier
+from models.gait_phase_classifier import CNNClassifier, LSTMClassifier, Classifier, MLPClassifier
 from data import load_prosthesis_loaders
 
 import neptune.new as neptune
@@ -60,6 +60,25 @@ def load_model_lstm(train_dir, config) -> (Classifier, DataLoader, DataLoader, D
     return model, train_dl, val_dl, test_dl
 
 
+def load_model_mlp(train_dir, config) -> (Classifier, DataLoader, DataLoader, DataLoader):
+    c_mlp = config['mlp']
+
+    train_dl, val_dl, test_dl = load_prosthesis_loaders(
+        log_dir=train_dir,
+        batch_size=c_mlp['batch_size'],
+        window_size=c_mlp['input_width'],
+        overlap_ratio=config['overlap_ratio'],
+        num_classes=config['output_dim'],
+        signal_type=config['signal_type'],
+        device=config['device'],
+    )
+
+    lstm_kwargs = MLPClassifier.kwargs_from_config(config)
+    model = MLPClassifier(**lstm_kwargs)
+
+    return model, train_dl, val_dl, test_dl
+
+
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('config', type=str, help='json string for sampled train configuration')
@@ -75,13 +94,12 @@ if __name__ == '__main__':
     job_dir = Path(args.job_dir)
     log_dir = Path(args.log_dir)
 
-    # config = json.loads('{"arch": "lstm", "num_samples": 5, "epoch": 10, "n_grace": 200, "time_limit": 20,  "target": "pros", "input_dim": 8, "output_dim": 9, "overlap_ratio": 0.8, "device": "cuda", "lstm": {"batch_size": 8, "window_size": 150, "feature_dim": 15, "hidden_dim": 16, "n_lstm_layers": 2, "lstm_norm": "none", "n_pre_nodes": 64, "n_pre_layers": 0, "n_post_nodes": 32, "n_post_layers": 1, "p_drop": 0.0, "fc_norm": "none", "lr": 0.001}}'  )
-    # job_dir.mkdir(exist_ok=True)
-
     if config['arch'] == 'cnn':
         model, train_dl, val_dl, test_dl = load_model_cnn(log_dir, config)
     elif config['arch'] == 'lstm':
         model, train_dl, val_dl, test_dl = load_model_lstm(log_dir, config)
+    elif config['arch'] == 'mlp':
+        model, train_dl, val_dl, test_dl = load_model_mlp(log_dir, config)
     else:
         raise ValueError(f"unexpected 'arch' value: {config['arch']}")
 
@@ -97,6 +115,7 @@ if __name__ == '__main__':
     start_time = datetime.now()
     n_wait = 0
     best_val_loss = float('inf')
+    test_acc_at_best = float('inf')
     exit_method = "normal"
     for epoch in range(config['epoch']):
         train_loss = model.train_model(epoch, train_dl)
@@ -106,6 +125,7 @@ if __name__ == '__main__':
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
+            test_acc_at_best = test_acc
             torch.save(model, best_model_file)
             n_wait = 0
         else:
@@ -116,6 +136,7 @@ if __name__ == '__main__':
             'train_loss': train_loss,
             'val_loss': val_loss,
             'best_val_loss': best_val_loss,
+            'test_acc_act_best': test_acc_at_best,
             'val_acc': val_acc,
             'test_acc': test_acc,
         }

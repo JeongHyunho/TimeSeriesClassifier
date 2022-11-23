@@ -1,9 +1,7 @@
 from __future__ import annotations
 
-import copy
 import json
 import logging
-import os
 import textwrap
 import time
 from datetime import datetime
@@ -102,6 +100,7 @@ class ClusterTrainer:
         . $HOME/.bashrc
         while [ ! -d "{self.exp_dir}" ]
         do
+          echo "wait for creating experiment directory"
           sleep 5s
         done
         mkdir -p "{self.exp_dir}/job$JOB_ID"
@@ -138,11 +137,12 @@ class ClusterTrainer:
 
         for job_id in self.job_ids:
             try:
-                # print(self.job.find_id(job_id))
                 job_state = self.job.find_id(job_id)[0]['job_state']
+                node = self.job.find_id(job_id)[0]['nodes']
             except ValueError:
                 continue
             self.stat.update_state(job_id, {'state': job_state})
+            self.stat.update_state(job_id, {'node': node})
 
             if job_state in ['PENDING', 'COMPLETED', 'FAILED']:
                 continue

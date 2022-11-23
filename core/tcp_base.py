@@ -1,5 +1,4 @@
 import logging
-import re
 from datetime import datetime
 from pathlib import Path
 
@@ -35,7 +34,7 @@ class BaseTcp:
         self.creation_time = datetime.now().strftime('%y%m%d-%H%M%S')
 
         # directory setup
-        assert Path(output_dir).exists(), "output directory doesn't exist"
+        assert Path(output_dir).exists(), f"output directory doesn't exist: {output_dir}"
         if not self.main_dir.exists():
             self.main_dir.mkdir(parents=True, exist_ok=True)
         if not self.tmp_dir.exists():

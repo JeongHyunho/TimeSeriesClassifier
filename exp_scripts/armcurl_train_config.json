@@ -1,22 +1,21 @@
 {
-  "arch": ["cnn", "lstm"],
-  "num_samples": 500,
+  "arch": ["cnn", "mlp"],
+  "num_samples": 300,
   "epoch": 2000,
   "n_grace": 200,
-  "time_limit": 60,
+  "time_limit": 5,
+  "signal_type": "all",
 
-  "loss_weight0": [0.0, 0.2, 0.5, 0.8, 1.0],
-  "mask_channel": [0, 1],
+  "loss_weight0": 1.0,
 
   "target": "armcurl",
-  "input_dim": 2,
   "output_dim": 2,
   "overlap_ratio": 0.8,
   "device": "cuda",
 
-  "cnn.batch_size": [2, 4, 8, 16, 32],
-  "cnn.input_width": 80,
-  "cnn.input_channels": 2,
+  "cnn.batch_size": [16, 32, 64],
+  "cnn.input_width": [100, 200, 300],
+  "cnn.input_channels": [1, 2, 3],
   "cnn.n_conv_layer0": [1, 2, 3],
   "cnn.n_conv_layer1": [1, 2, 3],
   "cnn.kernel_size0": [3, 5, 7],
@@ -31,8 +30,8 @@
   "cnn.fc_norm": ["none", "batch", "layer"],
   "cnn.lr": [5e-5, 1e-4, 5e-4, 1e-3],
 
-  "lstm.batch_size": [2, 4, 8, 16, 32],
-  "lstm.window_size": 150,
+  "lstm.batch_size": [16, 32, 64],
+  "lstm.window_size": [300, 500],
   "lstm.feature_dim": [5, 15, 25],
   "lstm.hidden_dim": [16, 32],
   "lstm.n_lstm_layers": [1, 2],
@@ -43,5 +42,14 @@
   "lstm.n_post_layers": [1, 2],
   "lstm.p_drop": [0.0, 0.3, 0.8],
   "lstm.fc_norm": ["none", "layer"],
-  "lstm.lr": [5e-5, 1e-4, 5e-4, 1e-3]
+  "lstm.lr": [5e-5, 1e-4, 5e-4, 1e-3],
+
+  "mlp.batch_size": [16, 32, 64],
+  "mlp.input_width": [50, 100, 200],
+  "mlp.hidden_nodes": [[1024, 512, 256, 128, 64, 32],
+  [512, 256, 128, 64, 32],
+  [256, 128, 64, 32]],
+  "mlp.act_fcn": ["relu", "tanh"],
+  "mlp.norm": ["none", "batch", "layer"],
+  "mlp.lr": [5e05, 1e-4, 5e-4, 1e-3]
 }

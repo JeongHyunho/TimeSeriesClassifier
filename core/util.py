@@ -2,7 +2,20 @@ import collections
 import random
 from functools import reduce
 
+import torch
 from colorama import Fore, Style
+
+
+def batch_by_window(t: torch.Tensor, w_size: int) -> torch.Tensor:
+    """ make batch tensor by shifting every window of size 'w_size' """
+
+    time_length = t.size(0)
+    assert t.ndim == 2, f"Tensor of (T, D) is expected, but got {t.shape}"
+    assert time_length >= w_size, 'too short time length'
+
+    net_in = torch.stack([t[i:i+w_size, :] for i in range(time_length - w_size + 1)], dim=0)
+
+    return net_in
 
 
 def yes_or_no(msg) -> bool:

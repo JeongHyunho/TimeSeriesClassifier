@@ -88,8 +88,23 @@ def lstm_basic_kwargs(time_length, input_dim, output_dim, use_gpu) -> dict:
 
 
 @pytest.fixture(scope='package')
+def mlp_basic_kwargs(time_length, input_dim, output_dim, use_gpu) -> dict:
+    kwargs = {
+        "input_dim": input_dim,
+        "output_dim": output_dim,
+        "input_width": time_length,
+        "hidden_nodes": [64, 32],
+        "act_fcn": "relu",
+        "norm": "none",
+        "device": "cuda" if use_gpu else "cpu",
+    }
+
+    return kwargs
+
+
+@pytest.fixture(scope='package')
 def make_session_fcn(stream_data) -> Callable:
-    def make_session(session_name, output_dir, num_trials=5):
+    def make_session(session_name, output_dir, num_trials=20):
         for _ in range(num_trials):
             buffer = ProsthesisBuffer(
                 session_name=session_name,

@@ -1,4 +1,6 @@
 import json
+import re
+import traceback
 import warnings
 from pathlib import Path
 
@@ -23,6 +25,7 @@ class BaseDataset(Dataset):
             validation=False,
             test=False,
             out_prefix='trial',
+            preprocess='preprocess.json',
     ):
         super().__init__()
         self.log_dir = log_dir
@@ -40,6 +43,21 @@ class BaseDataset(Dataset):
         self.num_trials = len(self.trials)
         assert self.num_trials > 0, FileExistsError(f"no trials found in {self.log_dir}")
 
+        preproc_file = self.log_dir / preprocess
+        if preproc_file.exists():
+            self.preproc_config = json.loads(preproc_file.read_text())
+
+            exist_keys = self.preproc_config.keys()
+            for trial in self.trials:
+                trial_number = re.findall("\d+", trial.name)[0]
+                if trial_number in exist_keys and \
+                        len(self.preproc_config[trial_number]) % 2 != 0:
+                    warnings.warn(f"expected a list of even number of elements for cut indices,"
+                                  f" but got {self.preproc_config[trial_number]}, ignored and set to whole range")
+                    self.preproc_config[trial_number] = []
+        else:
+            self.preproc_config = None
+
     def load_and_split(self, num_classes=None) -> (torch.Tensor, torch.Tensor):
         """ Load csv files and split all data into train/val/test batch tensors """
 
@@ -50,19 +68,30 @@ class BaseDataset(Dataset):
             if trial.suffix == '.csv':
                 from_csv = np.loadtxt(str(trial), delimiter=',', skiprows=1)
                 new_slice = slice(self.signal_rng.start+1, self.signal_rng.stop+1)
-                inp = from_csv[:, new_slice]
+
+                trial_number = re.findall("\d+", trial.name)[0]
+                if self.preproc_config and trial_number in self.preproc_config.keys():
+                    cut_indices = self.preproc_config[trial_number]
+                    cut_indices.insert(0, 0)
+                    cut_indices.append(-1)
+
+                    try:
+                        inp = []
+                        for start, end in zip(cut_indices[::2], cut_indices[1::2]):
+                            inp.append(from_csv[start:end, new_slice])
+                        inp = np.vstack(inp)
+                    except IndexError:
+                        warnings.warn(f'index error for preprocessing {trial}, ignored and set to whole range')
+                        warnings.warn(traceback.format_exc())
+                        inp = from_csv[:, new_slice]
+                else:
+                    inp = from_csv[:, new_slice]
             else:
                 raise NotImplementedError
 
-            label = from_csv[:, -self.output_dim]
-            # if num_classes:
-            #     inp = inp[label < num_classes, :]
-            #     label = label[label < num_classes]
+            label = from_csv[:, -self.output_dim:]
             inp_list.append(inp)
             label_list.append(label)
-
-            if np.any(label_list[-1] > 9):
-                print(trial)
 
         # split train/validation/test indices
         num_val_trials = int(self.num_trials * self.val_ratio)
@@ -154,9 +183,12 @@ class BaseDataset(Dataset):
                 x_list.append(from_csv[:, self.signal_rng])
             except ValueError:
                 from_csv = np.loadtxt(str(trial), delimiter=',', skiprows=1)
-                new_slice = slice(self.signal_rng.start, self.signal_rng.stop)
+                new_slice = slice(self.signal_rng.start+1, self.signal_rng.stop+1)
                 x_list.append(from_csv[:, new_slice])
             y_list.append(from_csv[:, -self.output_dim:])
+
+        x_list = [x_list[idx] for idx in self.test_indices]
+        y_list = [y_list[idx] for idx in self.test_indices]
 
         # standardization
         s_dict = json.loads(self.stand_file.read_text())
@@ -169,4 +201,3 @@ class BaseDataset(Dataset):
         yt_list = [torch.FloatTensor(y).to(device) for y in y_list]
 
         return xt_list, yt_list
-

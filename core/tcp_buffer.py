@@ -1,4 +1,5 @@
 import abc
+import json
 from pathlib import Path
 
 import numpy as np
@@ -63,6 +64,16 @@ class ProsthesisBuffer(BaseBuffer):
     PHASE_INFO = {'standing': 0, 'flat': 1, 'rising': 2, 'swing': 3}
     END_SIGNAL = 0
 
+    def __init__(self, *args, preprocess='preprocess.json', **kwargs):
+        super().__init__(*args, **kwargs)
+
+        self.preproc_file = self.main_dir / preprocess
+        if not self.preproc_file.exists():
+            # create default preprocess file
+            preproc_init = {"0": []}
+            self.preproc_file.write_text(json.dumps(preproc_init))
+            self.logger.info(f"created preprocess file: {self.preproc_file}")
+
     @property
     def data_len(self):
         return self.DATA_LEN
@@ -90,11 +101,7 @@ class ProsthesisBuffer(BaseBuffer):
         trs_idx = np.flatnonzero(np.diff(phase) != 0)
         trs_idx = np.hstack([trs_idx, n_steps - 1])
 
-        label = phase + len(self.PHASE_INFO) * speed
-        label[label == 4] = 0
-        for c in [5, 6, 7, 8]:
-            label[label == c] = c - 1
-
+        label = phase
         pd_data = pd.DataFrame(
             np.concatenate([signal, label[..., None]], axis=-1),
             columns=[*[f'signal{i}' for i in range(8)], 'label'],
@@ -141,7 +148,7 @@ class ProsthesisBuffer(BaseBuffer):
 class ArmCurlBuffer(BaseBuffer):
     """ Buffer for arm curl experiment """
 
-    DATA_LEN = 5
+    DATA_LEN = 6
     END_SIGNAL = 0
 
     @property
@@ -153,24 +160,28 @@ class ArmCurlBuffer(BaseBuffer):
 
     def post_process(self) -> pd.DataFrame:
         array = np.stack(self.data, axis=0)
-        signal = array[:, :2]
-        theta = array[:, 2]
-        torque = array[:, 3]
+        emg_signal = array[:, :2]
+        hall_signal = array[:, 2]
+        theta = array[:, 3]
+        torque = array[:, 4]
 
         pd_data = pd.DataFrame(
-            np.concatenate([signal, theta[..., None], torque[..., None]], axis=-1),
-            columns=['eim0', 'eim1', 'theta', 'torque'],
+            np.hstack([emg_signal, hall_signal[..., None], theta[..., None], torque[..., None]]),
+            columns=['emg0', 'emg1', 'hall', 'theta', 'torque'],
         )
 
         fh = plt.figure(figsize=(4, 8))
-        plt.subplot(3, 1, 1)
+        plt.subplot(4, 1, 1)
         plt.title(self.session_name + f' #{self.trial_idx}')
-        plt.plot(signal)
-        plt.ylabel('EIM')
-        plt.subplot(3, 1, 2)
+        plt.plot(emg_signal)
+        plt.ylabel('EMG')
+        plt.subplot(4, 1, 2)
+        plt.plot(hall_signal)
+        plt.ylabel('Hall Sensor')
+        plt.subplot(4, 1, 3)
         plt.plot(theta)
         plt.ylabel('Theta')
-        plt.subplot(3, 1, 3)
+        plt.subplot(4, 1, 4)
         plt.plot(torque)
         plt.ylabel('Torque')
         plt.xlabel('index')
