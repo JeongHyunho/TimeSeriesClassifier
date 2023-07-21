@@ -3,8 +3,8 @@
   "num_samples": 200,
   "epoch": 2000,
   "n_grace": 200,
-  "time_limit": 5,
-  "signal_type": "eim",
+  "time_limit": 10,
+  "signal_type": "all",
 
   "target": "pros",
   "output_dim": 4,

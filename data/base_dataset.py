@@ -21,6 +21,7 @@ class BaseDataset(Dataset):
             log_dir: Path,
             window_size: int,
             overlap_ratio: float,
+            signal_type: str,
             signal_rng: slice,
             validation=False,
             test=False,
@@ -31,6 +32,7 @@ class BaseDataset(Dataset):
         self.log_dir = log_dir
         self.window_size = window_size
         self.overlap_ration = overlap_ratio
+        self.signal_type = signal_type
         self.signal_rng = signal_rng
         self.interval = int(window_size * (1 - overlap_ratio))
 
@@ -99,14 +101,14 @@ class BaseDataset(Dataset):
         assert num_val_trials > 0, f"too small trials, make trials larger or val_ratio smaller: total {self.num_trials}"
         assert num_test_trials > 0, f"too small trials, make trials larger or test_ratio smaller: total {self.num_trials}"
         rng = np.random.default_rng(self.split_seed)
-        val_indices = rng.choice(np.arange(self.num_trials), num_val_trials)
-        test_indices = rng.choice(np.setdiff1d(np.arange(self.num_trials), val_indices), num_test_trials)
+        val_indices = rng.choice(np.arange(self.num_trials), num_val_trials, replace=False)
+        test_indices = rng.choice(np.setdiff1d(np.arange(self.num_trials), val_indices), num_test_trials, replace=False)
         train_indices = np.setdiff1d(np.arange(self.num_trials), np.hstack([val_indices, test_indices]))
         self.test_indices = test_indices
 
         # standardization parameters from train trials
         # save parameters
-        self.stand_file = Path(self.log_dir).joinpath('stand.json')
+        self.stand_file = Path(self.log_dir).joinpath(f'stand_{self.signal_type}.json')
         if self.stand_file.exists():
             s_dict = json.loads(self.stand_file.read_text())
             inp_mean = np.array(s_dict['mean'])

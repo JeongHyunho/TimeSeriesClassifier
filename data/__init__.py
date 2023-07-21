@@ -5,6 +5,7 @@ from torch.utils.data import DataLoader
 from data.armcurl_dataset import ArmCurlDataset
 from data.eit_emg_dataset import EitEmgGaitDetection
 from data.eit_emg_phase_dataset import EitEmgGaitPhaseDataset
+from data.golf_dataset import GolfDataset
 from data.pros_dataset import ProsDataset
 from data.snuh_dataset import SnuhEmgForAngle
 
@@ -65,7 +66,7 @@ def load_prosthesis_loaders(batch_size, log_dir, window_size, overlap_ratio, num
                             device='cuda') -> (DataLoader, DataLoader, DataLoader):
     ds_kwargs = {'log_dir': log_dir, 'window_size': window_size, 'overlap_ratio': overlap_ratio,
                  'num_classes': num_classes, 'signal_type': signal_type, 'device': device}
-    dl_kwargs = {'shuffle': True, 'batch_size': batch_size}
+    dl_kwargs = {'shuffle': True, 'batch_size': batch_size, 'drop_last': True}
 
     train_ds = ProsDataset(**ds_kwargs)
     train_dl = DataLoader(train_ds, **dl_kwargs)
@@ -83,7 +84,7 @@ def load_armcurl_loaders(batch_size, log_dir, window_size, overlap_ratio, signal
         -> (DataLoader, DataLoader, DataLoader):
     ds_kwargs = {'log_dir': log_dir, 'window_size': window_size, 'overlap_ratio': overlap_ratio,
                  'signal_type': signal_type, 'device': device}
-    dl_kwargs = {'shuffle': True, 'batch_size': batch_size}
+    dl_kwargs = {'shuffle': True, 'batch_size': batch_size, 'drop_last': True}
 
     train_ds = ArmCurlDataset(**ds_kwargs)
     train_dl = DataLoader(train_ds, **dl_kwargs)
@@ -92,6 +93,24 @@ def load_armcurl_loaders(batch_size, log_dir, window_size, overlap_ratio, signal
     val_dl = DataLoader(val_ds, **dl_kwargs)
 
     test_ds = ArmCurlDataset(**ds_kwargs, test=True)
+    test_dl = DataLoader(test_ds, **dl_kwargs)
+
+    return train_dl, val_dl, test_dl
+
+
+def load_golf_loaders(batch_size, log_dir, window_size, overlap_ratio, device='cuda')\
+        -> (DataLoader, DataLoader, DataLoader):
+    ds_kwargs = {'log_dir': log_dir, 'window_size': window_size, 'overlap_ratio': overlap_ratio,
+                 'device': device}
+    dl_kwargs = {'shuffle': True, 'batch_size': batch_size, 'drop_last': True}
+
+    train_ds = GolfDataset(**ds_kwargs)
+    train_dl = DataLoader(train_ds, **dl_kwargs)
+
+    val_ds = GolfDataset(**ds_kwargs, validation=True)
+    val_dl = DataLoader(val_ds, **dl_kwargs)
+
+    test_ds = GolfDataset(**ds_kwargs, test=True)
     test_dl = DataLoader(test_ds, **dl_kwargs)
 
     return train_dl, val_dl, test_dl

@@ -1,4 +1,7 @@
 import os
+
+import math
+
 os.environ["MKL_THREADING_LAYER"] = "GNU"
 
 import sys
@@ -85,6 +88,8 @@ if __name__ == '__main__':
     parser.add_argument('--time_limit', type=int, default=None, help='bound on train time')
     parser.add_argument('--use_neptune', action='store_true', default=False, help='use neptune logger')
     parser.add_argument('--creation_time', type=str, default=None, help='used as neptune tag')
+    parser.add_argument('--tagging', nargs='+', type=str, default=None, help='used as neptune tag')
+    parser.add_argument('--clear_models', action='store_true', default=False, help='do not save model files')
     args = parser.parse_args()
 
     config = json.loads(args.config)
@@ -107,7 +112,12 @@ if __name__ == '__main__':
     best_model_file = job_dir.joinpath('best_model.pt')
 
     if args.use_neptune:
-        neptune_client = neptune.init(**neptune_config(config['target']), tags=[log_dir.parent.name, args.creation_time])
+        tags = [log_dir.parent.name]
+        if args.creation_time is not None:
+            tags += [args.creation_time]
+        if args.tagging is not None:
+            tags += args.tagging
+        neptune_client = neptune.init(**neptune_config(config['target']), tags=tags)
         neptune_client['job_dir'] = job_dir.name
         for k, v in nested_dict_to_dot_map_dict(config).items():
             neptune_client[k] = v
@@ -121,6 +131,10 @@ if __name__ == '__main__':
         train_loss, train_info = model.train_model(epoch, train_dl)
         val_loss, val_info = model.train_model(epoch, val_dl, evaluation=True)
         test_acc = model.calc_acc(test_dl.dataset.samples, test_dl.dataset.labels)
+
+        if math.isnan(train_loss) or math.isinf(train_loss):
+            exit_method = "invalid_loss"
+            break
 
         if val_loss < best_val_loss:
             best_val_loss = val_loss
@@ -162,22 +176,27 @@ if __name__ == '__main__':
             exit_method = "time_out"
             break
 
-    torch.save(model, model_file)
-    del model
-
     if args.use_neptune:
         # postprocessing
-        model = torch.load(best_model_file, map_location='cpu')
-        if type(model) in [CNNEstimator, MLPEstimator]:
-            w_size = model.input_width
-        else:
-            w_size = None
-        img_files = model.post_process(
-            test_dl.dataset, post_dir=job_dir, w_size=w_size, y_labels=['Theta', 'Torque'], device='cpu',
-        )
+        if best_model_file.exists():
+            model = torch.load(best_model_file, map_location='cpu')
+            if type(model) in [CNNEstimator, MLPEstimator]:
+                w_size = model.input_width
+            else:
+                w_size = None
+            img_files = model.post_process(
+                test_dl.dataset, post_dir=job_dir, w_size=w_size, y_labels=['Theta', 'Torque'], device='cpu',
+            )
 
-        for idx, file in enumerate(img_files):
-            neptune_client[f"train/post_process{idx}"].upload(str(file))
+        if 'img_files' in locals().keys():
+            for idx, file in enumerate(img_files):
+                neptune_client[f"train/post_process{idx}"].upload(str(file))
 
         neptune_client["exit_method"] = exit_method
         neptune_client.stop()
+
+    if args.clear_models:
+        for pt_file in Path(job_dir).rglob('*.pt'):
+            os.remove(pt_file)
+    else:
+        torch.save(model, model_file)

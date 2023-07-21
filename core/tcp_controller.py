@@ -268,11 +268,7 @@ class DummyProsthesisController(ProsthesisController):
 
     def __init__(
             self,
-            model_dir: str,
             *args,
-            model_file: str = 'model.pt',
-            variant_file: str = 'variant.json',
-            device: str = 'cpu',
             **kwargs,
     ):
         super(ProsthesisController, self).__init__(*args, **kwargs)

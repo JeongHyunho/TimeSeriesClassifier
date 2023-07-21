@@ -25,9 +25,12 @@ class ClusterTrainer:
             self,
             cluster: dict,
             output_dir: str | Path = conf.OUTPUT_DIR,
+            train_session: str = 'train'
     ):
         self.cluster = cluster
         self.output_dir = Path(output_dir)
+        self.train_session = train_session
+
         self.job = pyslurm.job()
         self.job_ids = []
         self.logger = logging.getLogger('session.trainer')
@@ -37,7 +40,7 @@ class ClusterTrainer:
         self.logger.info(f"train session of {name} started (#samples: {num_samples})")
 
         # directory setup, handle overwriting
-        exp_dir = self.output_dir / name / 'train'
+        exp_dir = self.output_dir / name / self.train_session
         if exp_dir.exists() and not overwrite:
             yes = yes_or_no(f'confirm to overwrite on {exp_dir}')
             if not yes:
@@ -171,3 +174,17 @@ class ClusterTrainer:
                 pass
 
         self.logger.info(f'total {len(df_killed)} jobs are terminated')
+
+    def save_summary(self, sort_by=None):
+        df = self.stat.config_df.dropna()
+
+        if sort_by:
+            df = df.sort_values(by=[sort_by])
+
+        if self.exp_dir:
+            exp_dir = self.exp_dir
+        else:
+            exp_dir = Path(__file__).parent
+            self.logger.warning(f'no experiment directory is not set, summary will be save to {exp_dir}')
+
+        df.to_csv(exp_dir / 'summary.csv')

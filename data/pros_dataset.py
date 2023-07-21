@@ -3,6 +3,24 @@ import torch.nn.functional as F
 from data.base_dataset import BaseDataset
 
 
+def pros_input_dim_from_signal_type(signal_type: str) -> int:
+
+    if signal_type == 'all':
+        input_dim = 10
+    elif signal_type == 'emg':
+        input_dim = 4
+    elif signal_type == 'eim':
+        input_dim = 4
+    elif signal_type == 'imu':
+        input_dim = 2
+    elif signal_type == 'bio':
+        input_dim = 8
+    else:
+        raise ValueError(f'{signal_type} not in ["all", "emg", "eim", "imu", "bio"]')
+
+    return input_dim
+
+
 class ProsDataset(BaseDataset):
 
     val_ratio = 0.2
@@ -26,18 +44,23 @@ class ProsDataset(BaseDataset):
     ):
         self.signal_type = signal_type
         if self.signal_type == 'all':
-            signal_rng = slice(0, 8)
+            signal_rng = slice(0, 10)
         elif self.signal_type == 'emg':
             signal_rng = slice(0, 4)
         elif self.signal_type == 'eim':
             signal_rng = slice(4, 8)
+        elif self.signal_type == 'imu':
+            signal_rng = slice(8, 10)
+        elif self.signal_type == 'bio':
+            signal_rng = slice(0, 8)
         else:
-            raise ValueError(f'{self.signal_type} not in ["all", "emg", "eim]')
+            raise ValueError(f'{self.signal_type} not in ["all", "emg", "eim", "imu", "bio"]')
 
         super().__init__(
             log_dir=log_dir,
             window_size=window_size,
             overlap_ratio=overlap_ratio,
+            signal_type=signal_type,
             signal_rng=signal_rng,
             validation=validation,
             test=test,
@@ -47,7 +70,7 @@ class ProsDataset(BaseDataset):
 
         xb, yb = self.load_and_split(num_classes)
         yb = yb.long()
-        cb_tensor = F.one_hot(yb, num_classes=num_classes)
+        cb_tensor = F.one_hot(yb, num_classes=num_classes)[:, :, 0, :]
 
         # change device
         self.samples = xb.to(device)

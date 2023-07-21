@@ -1,30 +1,42 @@
+from __future__ import annotations
+
 import abc
 import math
-
-import matplotlib.pyplot as plt
 import numpy as np
-import torch
-from sklearn.metrics import confusion_matrix
-from torch import nn, optim
-from torch.utils.data import DataLoader
+from pathlib import Path
 
-from data.pros_dataset import pros_input_dim_from_signal_type
+import pandas as pd
+import torch
+from matplotlib import pyplot as plt
+from torch import nn, optim
+from torch.utils.data import DataLoader, Dataset
+from typing import List
+
+from core.util import batch_by_window
+from data.base_dataset import BaseDataset
 from models import identity
 from models.networks import LayerNormLSTM, construct_mlp, Basic1DCNN
 
 
-class Classifier(nn.Module, abc.ABC):
+class Estimator(nn.Module, abc.ABC):
 
-    def __init__(self, reduce_time):
+    def __init__(
+            self,
+            input_dim: int,
+            output_dim: int,
+            reduce_time: bool,
+    ):
         super().__init__()
+        self.input_dim = input_dim
+        self.output_dim = output_dim
         self.reduce_time = reduce_time
 
-    def calc_loss(self, input, label):
+    def calc_loss(self, input, label) -> torch.Tensor:
         """ Calculate loss of model on a data
 
         Args:
-            input (torch.Tensor): input date tensor of (B, T, D)
-            label (torch.Tensor): one-hot vector tensor of (B, T, C)
+            input (torch.Tensor): input tensor of (B, T, D)
+            label (torch.Tensor): output tensor of (B, T, S)
 
         Returns:
              torch.Tensor: loss of scalar tensor
@@ -34,23 +46,21 @@ class Classifier(nn.Module, abc.ABC):
         if self.reduce_time:
             label = label[:, -1, :]
 
-        pred = self.forward(input)
-        y_pred = torch.sum(pred * label,  dim=-1)
-
-        loss = - (y_pred - torch.logsumexp(pred, dim=-1)).mean()
+        pred = self.__call__(input)
+        loss = torch.mean((pred - label) ** 2)
 
         return loss
 
     @torch.no_grad()
-    def calc_acc(self, input, label):
-        """ Calculate accuracy on a data
+    def calc_acc(self, input, label) -> float:
+        """ Calulate accuracy on a data
 
         Args:
-            input (torch.Tensor): input data tensor of (B, T, D)
-            label (torch.Tensor):  one-hot vector tensor of (B, T, C)
+            input (torch.Tensor): input tensor of (B, T, D)
+            label (torch.Tensor):  output tensor of (B, T, S)
 
         Returns:
-            float: accuracy scalar
+            float: accuracy
 
         """
 
@@ -59,24 +69,27 @@ class Classifier(nn.Module, abc.ABC):
             label = label[:, -1, :]
 
         pred = self.forward(input)
-        p_label = torch.argmax(pred, dim=-1)
-        label_idx = torch.argmax(label, dim=-1)
-        acc = torch.sum(p_label == label_idx) / p_label.nelement()
+        errors = (pred - label) ** 2
+        acc = torch.mean(errors).item()
 
-        return acc.item()
+        return acc
 
-    def train_model(self, epoch, loader, evaluation=False, verbose=False):
+    def train_model(self, epoch, loader, evaluation=False, verbose=False) -> float:
         """ Iterate data loader to train/evaluate model
 
         Args:
             epoch (int): current number of epoch
-            loader (DataLoader): loader for train/evaluaion
+            loader (DataLoader): loader for train/evaluation
             evaluation (bool): flag for evaluation mode
             verbose (bool): print loss or not
+
+        Returns:
+            float: train loss of this epoch
 
         """
 
         train_loss = 0.
+
         if evaluation:
             self.eval()
         else:
@@ -101,44 +114,6 @@ class Classifier(nn.Module, abc.ABC):
 
         return train_loss
 
-    @torch.no_grad()
-    def confusion_matrix_figure(self, inp, label) -> plt.Figure:
-        """ draw confusion matrix
-
-        Args:
-            inp (torch.Tensor): input data tensor of (B, T, D)
-            label (torch.Tensor): one-hot vector tensor of (B, T, C)
-
-        Returns: matplotlib figure handle
-
-        """
-
-        self.eval()
-        if self.reduce_time:
-            label = label[:, -1, :]
-
-        idx_label = torch.argmax(label, dim=-1)
-        pred = self.forward(inp)
-        p_label = torch.argmax(pred, dim=-1)
-
-        conf_mat = confusion_matrix(idx_label.cpu().flatten(), p_label.cpu().flatten(), labels=np.arange(label.size(-1)))
-        conf_mat = conf_mat / np.sum(conf_mat, -1, keepdims=True)
-
-        fig = plt.figure(figsize=(5,5))
-        plt.set_cmap('Greys_r')
-        ax = fig.gca()
-        cax = ax.matshow(conf_mat)
-        cax.set_clim(vmin=0., vmax=1.)
-        fig.colorbar(cax)
-
-        for idx_r, row in enumerate(conf_mat):
-            for idx_c, el in enumerate(row):
-                text_c = np.ones(3) if el < 0.5 else np.zeros(3)
-                ax.text(idx_c, idx_r, f'{100 * el:.1f}',
-                        va='center', ha='center', c=text_c, size='x-large')
-
-        return fig
-
     @abc.abstractmethod
     def forward(self, inp, *args, **kwargs):
         """ predict via model
@@ -147,7 +122,7 @@ class Classifier(nn.Module, abc.ABC):
             inp (torch.Tensor): input date tensor of (B, T, D)
 
         Returns:
-            torch.Tensor: result tensor of (B, C) if reduce_time is true, else (B, T, C)
+            torch.Tensor: prediction tensor of (B, S) if 'reduce_time' is true, else (B, T, S)
 
         """
         raise NotImplementedError
@@ -165,8 +140,71 @@ class Classifier(nn.Module, abc.ABC):
         """
         raise NotImplementedError
 
+    @torch.no_grad()
+    def post_process(self, dataset: BaseDataset, post_dir, w_size=None, y_labels=None, device='cpu') -> List[Path]:
+        """ evaluate model and save results
 
-class CNNClassifier(Classifier):
+        Args:
+            dataset (Dataset): dataset of processed data
+            post_dir (Path): directory for saving results
+            w_size (int): required if model input is window of tensor
+            y_labels (str): y-axis labels in plot
+            device (str): device for input/output tensors of model
+
+        Returns:
+            List[Path]: result file path
+
+        """
+
+        files = []
+        samples, labels = dataset.get_test_stream(device=device)
+
+        self.eval()
+        for idx, (x, y) in enumerate(zip(samples, labels)):
+            if self.reduce_time:
+                assert w_size is not None, f"'w_size' is required for this model {type(self)}"
+                inp = batch_by_window(x, w_size)
+                pred = self(inp)
+                nan_tensor = torch.nan * torch.ones(w_size -1, pred.size(-1))
+                pred = torch.cat([nan_tensor.to(device), pred], dim=0)
+            else:
+                pred = self(x[None, ...])[0, ...]
+
+            p_np, y_np = pred.cpu().numpy(), y.cpu().numpy()
+            mse = np.nanmean((p_np - y_np) ** 2, axis=0)
+            rmse = np.sqrt(mse)
+            pm_np = np.nanmean(p_np, axis=0, keepdims=True)
+            ym_np = np.nanmean(y_np, axis=0, keepdims=True)
+            r2 = 1 - np.nansum((p_np - y_np) ** 2, axis=0) / np.nansum((y_np - ym_np) ** 2, axis=0)
+            vaf = 100*np.nansum((y_np-ym_np)*(p_np-pm_np), axis=0) / np.nansum((y_np-ym_np) ** 2, axis=0)
+
+            fh = plt.figure(figsize=(4, 2 + 2 * self.output_dim))
+            plt.subplot(self.output_dim, 1, 1)
+
+            plt.subplot()
+            plt.plot(np.hstack([p_np, y_np]), label=['pred', 'data'])
+            plt.ylabel(y_labels)
+
+            summary = f'\nRMSE: {rmse[0]:.2f}, R2: {r2[0]:.2f}, VAF: {vaf[0]:.1f}%'
+            plt.title(f'#{idx}' + summary)
+            plt.legend()
+            plt.xlabel('index')
+            plt.tight_layout()
+
+            img_filename = post_dir.joinpath(f'postprocess{idx}.png')
+            files.append(img_filename)
+            fh.savefig(img_filename)
+            plt.close()
+
+            pd_data = pd.DataFrame(np.hstack([p_np, y_np]), columns=['prediction', 'label'])
+            csv_filename = post_dir.joinpath(f'test_resutls{idx}.csv')
+            pd_data.to_csv(csv_filename)
+        self.train()
+
+        return files
+
+
+class CNNEstimator(Estimator):
     def __init__(
             self,
 
@@ -196,7 +234,13 @@ class CNNClassifier(Classifier):
             fc_norm='none',
             fc_act_fcn='relu',
     ):
-        super().__init__(reduce_time=True)
+        super().__init__(
+            input_dim=input_channels,
+            output_dim=output_dim,
+            reduce_time=True,
+        )
+        self.input_width = input_width
+
         self.cnn = Basic1DCNN(
             input_width=input_width,
             input_channels=input_channels,
@@ -232,7 +276,7 @@ class CNNClassifier(Classifier):
             inp (torch.Tensor): input date tensor of (B, T, D)
 
         Returns:
-            torch.Tensor: result tensor of (B, C)
+            torch.Tensor: prediction tensor of (B, S)
 
         """
 
@@ -245,13 +289,15 @@ class CNNClassifier(Classifier):
     @staticmethod
     def kwargs_from_config(config):
         c_cnn = config['cnn']
-        input_channels = pros_input_dim_from_signal_type(config['signal_type'])
+
+        input_channels = 4
 
         # assume two rounds cnn architecture
         kernel_sizes = [c_cnn['kernel_size0']] * c_cnn['n_conv_layer0'] \
                        + [c_cnn['kernel_size1']] * c_cnn['n_conv_layer1']
         n_channels = [input_channels * c_cnn['k_channel0']] * c_cnn['n_conv_layer0'] \
                      + [input_channels * c_cnn['k_channel1']] * c_cnn['n_conv_layer1']
+
         pool_sizes = [0] * (c_cnn['n_conv_layer0'] - 1) + [c_cnn['pool_size']] \
                      + [0] * (c_cnn['n_conv_layer1'] - 1) + [c_cnn['pool_size']]
         pool_strides = [None] * (c_cnn['n_conv_layer0'] - 1) + [c_cnn['pool_stride']] \
@@ -282,7 +328,7 @@ class CNNClassifier(Classifier):
         return kwargs
 
 
-class LSTMClassifier(Classifier):
+class LSTMEstimator(Estimator):
     def __init__(
             self,
 
@@ -300,7 +346,11 @@ class LSTMClassifier(Classifier):
             fc_norm='none',
             device='cuda',
     ):
-        super().__init__(reduce_time=False)
+        super().__init__(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            reduce_time=False,
+        )
         assert lstm_norm in ['none', 'layer']
         assert fc_norm in ['none', 'layer']
 
@@ -335,7 +385,7 @@ class LSTMClassifier(Classifier):
             inp (torch.Tensor): input data tensor of (B, T, D)
 
         Returns:
-            torch.Tensor: result tensor of (B, T, C)
+            torch.Tensor: prediction tensor of (B, T, S)
 
         """
 
@@ -352,8 +402,8 @@ class LSTMClassifier(Classifier):
         c_lstm = config['lstm']
         pre_layers = [c_lstm['n_pre_nodes']] * c_lstm['n_pre_layers']
         post_layers = [c_lstm['n_post_nodes']] * c_lstm['n_post_layers']
-        input_dim = pros_input_dim_from_signal_type(config['signal_type'])
 
+        input_dim = 4
         kwargs = {
             'input_dim': input_dim,
             'output_dim': config['output_dim'],
@@ -372,22 +422,27 @@ class LSTMClassifier(Classifier):
         return kwargs
 
 
-class MLPClassifier(Classifier):
+class MLPEstimator(Estimator):
+    """ Multi-layered perceptron estimator """
 
     def __init__(
             self,
-
-            input_dim,
-            output_dim,
-            input_width,
-            hidden_nodes,
-            act_fcn='relu',
-            lr=1e-3,
-            norm='none',
-            device='cuda',
+            input_dim: int,
+            output_dim: int,
+            input_width: int,
+            hidden_nodes: List[int],
+            act_fcn: str = 'relu',
+            lr: float = 1e-3,
+            norm: str = 'none',
+            device: str = 'cuda',
     ):
-        super().__init__(reduce_time=True)
+        super().__init__(
+            input_dim=input_dim,
+            output_dim=output_dim,
+            reduce_time=True,
+        )
         assert norm in ['none', 'batch', 'layer']
+        self.input_width = input_width
 
         self.mlp = construct_mlp(
             hidden_nodes,
@@ -401,13 +456,13 @@ class MLPClassifier(Classifier):
         self.to(device)
 
     def forward(self, inp, **kwargs):
-        """ predict via MLP
+        """ predict vial MLP
 
         Args:
-            inp (torch.Tensor): input data tensor of (B, T, D)
+            inp: (torch.Tensor): input data tensor of (B, T, D)
 
         Returns:
-            torch.Tensor: result tensor of (B, C)
+            torch.Tensor: result tensor of (B, O)
 
         """
 
@@ -419,14 +474,14 @@ class MLPClassifier(Classifier):
     @staticmethod
     def kwargs_from_config(config):
         c_mlp = config['mlp']
-        input_dim = pros_input_dim_from_signal_type(config['signal_type'])
 
+        input_dim = 4
         kwargs = {
             'input_dim': input_dim,
             'output_dim': config['output_dim'],
             'input_width': c_mlp['input_width'],
             'hidden_nodes': c_mlp['hidden_nodes'],
-            'act_fcn': 'relu',
+            'act_fcn': c_mlp['act_fcn'],
             'norm': c_mlp['norm'],
             'lr': c_mlp['lr'],
             'device': config['device'],

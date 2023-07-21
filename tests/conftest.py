@@ -16,15 +16,8 @@ logging.basicConfig(
 
 
 def pytest_addoption(parser):
-    parser.addoption("--signal_type", type=str, choices=['all', 'emg', 'eim'], default='all',
-                     help='type of sigal, it determines input_dim')
     parser.addoption("--use_gpu", action="store_true", default=False, help='use gpu or not')
     parser.addoption("--log_debug", action="store_true", default=False, help='set debug logging')
-
-
-@pytest.fixture(scope="session")
-def signal_type(pytestconfig):
-    return pytestconfig.getoption("signal_type")
 
 
 @pytest.fixture(scope="session")
@@ -43,8 +36,13 @@ def address() -> str:
 
 
 @pytest.fixture(scope="session")
-def port() -> int:
+def recv_port() -> int:
     return 9105
+
+
+@pytest.fixture(scope="session")
+def send_port() -> int:
+    return 9106
 
 
 @pytest.fixture(scope='package')

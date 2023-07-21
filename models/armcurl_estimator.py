@@ -89,7 +89,7 @@ class Estimator(nn.Module, abc.ABC):
 
         Args:
             epoch (int): current number of epoch
-            loader (DataLoader): loader for train/evaluaion
+            loader (DataLoader): loader for train/evaluation
             evaluation (bool): flag for evaluation mode
             verbose (bool): print loss or not
 
@@ -173,6 +173,7 @@ class Estimator(nn.Module, abc.ABC):
         """
 
         files = []
+        y_labels = [str(idx) for idx in range(self.output_dim)] if y_labels is None else y_labels
         samples, labels = dataset.get_test_stream(device=device)
 
         self.eval()
@@ -187,19 +188,24 @@ class Estimator(nn.Module, abc.ABC):
                 pred = self(x[None, ...])[0, ...]
 
             p_np, y_np = pred.cpu().numpy(), y.cpu().numpy()
+            mse = np.nanmean((p_np - y_np) ** 2, axis=0)
+            rmse = np.sqrt(mse)
+            pm_np = np.nanmean(p_np, axis=0, keepdims=True)
+            ym_np = np.nanmean(y_np, axis=0, keepdims=True)
+            r2 = 1 - np.nansum((p_np - y_np) ** 2, axis=0) / np.nansum((y_np - ym_np) ** 2, axis=0)
+            vaf = 100*np.nansum((y_np-ym_np)*(p_np-pm_np), axis=0) / np.nansum((y_np-ym_np) ** 2, axis=0)
 
             fh = plt.figure(figsize=(4, 2 + 2 * self.output_dim))
             plt.subplot(self.output_dim, 1, 1)
 
             for out_idx in range(self.output_dim):
                 plt.subplot(self.output_dim, 1, out_idx + 1)
-                plt.plot(np.vstack([p_np[:, out_idx], y_np[:, out_idx]]).T, label=['data', 'pred'])
-
-                if labels is not None:
-                    plt.ylabel(y_labels[out_idx])
+                plt.plot(np.vstack([p_np[:, out_idx], y_np[:, out_idx]]).T, label=['pred', 'data'])
+                plt.ylabel(y_labels[out_idx])
 
                 if out_idx == 0:
-                    plt.title(f'#{idx}')
+                    summary = ''.join([f'\n{n} RMSE: {e:.2f}, R2: {r:.2f}, VAF: {v:.1f}%' for n, e, r, v in zip(y_labels, rmse, r2, vaf)])
+                    plt.title(f'#{idx}' + summary)
                     plt.legend()
                 elif out_idx == self.output_dim - 1:
                     plt.xlabel('index')
@@ -306,10 +312,10 @@ class CNNEstimator(Estimator):
             input_channels = 3
         elif config['signal_type'] == 'emg':
             input_channels = 2
-        elif config['signal_type'] == 'hall':
+        elif config['signal_type'] == 'enc':
             input_channels = 1
         else:
-            raise ValueError(f"{config['signal_type']} not in ['all', 'emg', 'hall']")
+            raise NotImplementedError(f"{config['signal_type']} is not in ['emg', 'enc', 'all']")
 
         # assume two rounds cnn architecture
         kernel_sizes = [c_cnn['kernel_size0']] * c_cnn['n_conv_layer0'] \
@@ -432,10 +438,10 @@ class LSTMEstimator(Estimator):
             input_dim = 3
         elif config['signal_type'] == 'emg':
             input_dim = 2
-        elif config['signal_type'] == 'hall':
+        elif config['signal_type'] == 'enc':
             input_dim = 1
         else:
-            raise ValueError(f"{config['signal_type']} not in ['all', 'emg', 'hall']")
+            raise NotImplementedError(f"{config['signal_type']} is not in ['emg', 'enc', 'all']")
 
         kwargs = {
             'input_dim': input_dim,
@@ -515,10 +521,10 @@ class MLPEstimator(Estimator):
             input_dim = 3
         elif config['signal_type'] == 'emg':
             input_dim = 2
-        elif config['signal_type'] == 'hall':
+        elif config['signal_type'] == 'enc':
             input_dim = 1
         else:
-            raise ValueError(f"{config['signal_type']} not in ['all', 'emg', 'hall']")
+            raise NotImplementedError(f"{config['signal_type']} is not in ['emg', 'enc', 'all']")
 
         loss_weight = [config['loss_weight0'], 1 - config['loss_weight0']]
 
@@ -528,7 +534,7 @@ class MLPEstimator(Estimator):
             'input_width': c_mlp['input_width'],
             'hidden_nodes': c_mlp['hidden_nodes'],
             'loss_weight': loss_weight,
-            'act_fcn': 'relu',
+            'act_fcn': c_mlp['act_fcn'],
             'norm': c_mlp['norm'],
             'lr': c_mlp['lr'],
             'device': config['device'],

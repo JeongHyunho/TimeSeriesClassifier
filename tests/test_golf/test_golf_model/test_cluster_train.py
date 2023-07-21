@@ -1,3 +1,5 @@
+import shutil
+
 import pytest
 import os
 import socket
@@ -7,8 +9,9 @@ from core.cluster_trainer import ClusterTrainer
 
 
 @pytest.mark.skipif(condition='lab6079' != socket.gethostname(), reason="only lab6079 is allowed")
-def test_estimator_cluster_train(make_session_fcn, train_py, train_config, cluster_config, tmp_path):
-    make_session_fcn(session_name='test', output_dir=tmp_path, num_trials=200)
+def test_estimator_cluster_train(data_path, train_py, train_config, cluster_config, tmp_path):
+    (tmp_path / 'test' / 'log').mkdir(parents=True, exist_ok=True)
+    shutil.copytree(data_path, tmp_path / 'test' / 'log', dirs_exist_ok=True)
 
     trainer = ClusterTrainer(cluster_config, output_dir=tmp_path)
     trainer.run(

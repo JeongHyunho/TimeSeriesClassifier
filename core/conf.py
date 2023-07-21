@@ -2,7 +2,7 @@ from sys import platform
 
 
 # tcp setup
-ADDR = '192.168.1.12'
+ADDR = '192.168.0.84'
 RECV_PORT = 9105
 SEND_PORT = 9106
 

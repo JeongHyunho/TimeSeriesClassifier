@@ -37,16 +37,25 @@ def test_buffer_overwrite(stream_data, overwrite, tmp_path):
 
 
 def test_log_connect(stream_data, create_client_fn, address, port, data_len, log_debug, tmp_path):
-    ser_sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-    ser_sock.bind((address, port))
-    ser_sock.listen(5)
+    sock_recv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock_recv.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock_recv.bind((address, recv_port))
+    sock_recv.listen(5)
 
-    logger = logging.getLogger('session')
+    sock_send = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    sock_send.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+    sock_send.bind((address, send_port))
+    sock_send.listen(5)
+
+    logger = logging.getLogger('test')
     if log_debug:
         logger.setLevel(logging.DEBUG)
 
-    start_new_thread(create_client_fn, (), {'type': 'log'})
-    conn, _ = ser_sock.accept()
+    start_new_thread(create_client_fn, ('receive',))
+    conn_recv, _ = sock_recv.accept()
+    start_new_thread(create_client_fn, ('send',))
+    conn_send, _ = sock_send.accept()
+
     buffer = ProsthesisBuffer(session_name='test', output_dir=tmp_path)
 
     run_log_session(conn, buffer)

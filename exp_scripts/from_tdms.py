@@ -13,7 +13,7 @@ log_root = Path('/home/user/Dropbox/MATLAB_dropbox/TimeSeriesClassifier/output/'
 if __name__ == '__main__':
     parser = ArgumentParser()
     parser.add_argument('name', type=str, help='log session name')
-    parser.add_argument('--fix_label', action='store_true', help='fix mis-label: (1,2)->1, 2->1, 3->2, 4->3')
+    parser.add_argument('--fix_label', action='store_true', help='fix mis-label: 1->0, 2->1, 3->2, 4->3')
     args = parser.parse_args()
 
     log_dir = log_root / args.name / 'log'
@@ -21,7 +21,7 @@ if __name__ == '__main__':
     tdms_dir = log_root / args.name / 'from_tdms'
     assert tdms_dir.exists(), f"no tdms directory: {tdms_dir}"
 
-    files = list(tdms_dir.glob('*_real.csv'))
+    files = list(tdms_dir.glob('*_real*.csv'))
     print(f"{len(files)} trials are found in tdms directory: {tdms_dir}:")
     for file in files:
         print(file)
@@ -47,6 +47,7 @@ if __name__ == '__main__':
 
         label = phase
         if args.fix_label:
+            label[label == 1] = 0
             label[label == 2] = 1
             label[label == 3] = 2
             label[label == 4] = 3
